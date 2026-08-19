@@ -1,26 +1,32 @@
+<div align="center">
+
 # macos-liquid-glass
+
+**Liquid Glass windows on macOS** — that follow
+**System Settings ▸ Appearance ▸ Icon & widget style**.
+
+The setting that restyles desktop widgets, tracked live.
+
+![Two windows over a desktop: a titled one with traffic lights, and a borderless one with none](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/macos-liquid-glass.jpg)
 
 [![crates.io](https://img.shields.io/crates/v/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
 [![Downloads](https://img.shields.io/crates/d/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
 [![MSRV](https://img.shields.io/crates/msrv/macos-liquid-glass?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/i-am-logger/macos-liquid-glass/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/i-am-logger/macos-liquid-glass/actions/workflows/ci.yml)
 [![docs.rs](https://img.shields.io/docsrs/macos-liquid-glass?logo=docsdotrs&logoColor=white)](https://docs.rs/macos-liquid-glass)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/i-am-logger/macos-liquid-glass/badge)](https://scorecard.dev/viewer/?uri=github.com/i-am-logger/macos-liquid-glass)
 
 [![Nix](https://img.shields.io/badge/Nix-2b2b2b?logo=nixos&logoColor=white)](https://nixos.org)
 [![devenv](https://img.shields.io/badge/devenv-2b2b2b?logo=nixos&logoColor=white)](https://devenv.sh)
 [![macOS](https://img.shields.io/badge/macOS%2026%2B-2b2b2b?logo=apple&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/MIT-2b2b2b?logo=opensourceinitiative&logoColor=white)](LICENSE)
 
-> Liquid Glass windows on macOS that follow **System Settings ▸ Appearance ▸
-> Icon & widget style** — the setting that restyles desktop widgets.
-
-![Two windows over a desktop: a titled one with traffic lights, and a borderless one with none](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/macos-liquid-glass.jpg)
+</div>
 
 The same window under three of the nine Icon & widget style tokens — Default,
 Dark, and Tinted taking the system accent — over an identical backdrop:
 
 ![The same window rendered under the Default, Dark and Tinted icon styles](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/styles.jpg)
+
 
 Putting a window on `NSGlassEffectView` is the easy part. Making it *agree* with
 the widget style, and keep agreeing as the user changes it, is not: the
