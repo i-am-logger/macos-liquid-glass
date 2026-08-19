@@ -12,6 +12,8 @@
 //! `NSWindow` subclass overrides.
 
 use std::cell::Cell;
+#[cfg(feature = "icon-style")]
+use std::cell::RefCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -55,6 +57,10 @@ impl Chrome {
 #[derive(Debug, Default)]
 struct WindowState {
     close_on_escape: Cell<bool>,
+    /// Owned by the window so the caller cannot drop it by accident. Its
+    /// callback holds a *weak* reference back, so this is not a cycle.
+    #[cfg(feature = "icon-style")]
+    style_observer: RefCell<Option<crate::icon_style::StyleObserver>>,
 }
 
 /// Reject a size AppKit would trap on, with a message naming the value.
@@ -523,6 +529,52 @@ impl GlassWindow {
     #[must_use]
     pub fn ns_window(&self) -> &NSWindow {
         &self.window
+    }
+}
+
+#[cfg(feature = "icon-style")]
+impl GlassWindow {
+    /// Track the system Icon & widget style and keep this window's appearance
+    /// matched to it, for as long as the window lives.
+    ///
+    /// The window owns the observer, so there is nothing for the caller to hold
+    /// and nothing to drop by accident — the common mistake with
+    /// [`StyleObserver`], which stops delivering the moment it is dropped.
+    /// Dropping the window unregisters it.
+    ///
+    /// This applies the appearance only. To drive your own drawing from the
+    /// style — colours, a theme tint, anything beyond light/dark — construct a
+    /// [`StyleObserver`] directly and hold it yourself; the two are independent
+    /// and both may be used.
+    ///
+    /// Calling this again replaces the previous observer.
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "window", feature = "icon-style"))] {
+    /// use macos_liquid_glass::icon_style::Reconcile;
+    /// use macos_liquid_glass::window::GlassWindow;
+    /// use objc2_foundation::{MainThreadMarker, NSSize};
+    ///
+    /// let mtm = MainThreadMarker::new().expect("main thread");
+    /// let window = GlassWindow::new(mtm, NSSize::new(560.0, 360.0), "example");
+    /// window.follow_icon_style(Reconcile::default());
+    /// window.show();
+    /// # }
+    /// ```
+    ///
+    /// [`StyleObserver`]: crate::icon_style::StyleObserver
+    pub fn follow_icon_style(&self, reconcile: crate::icon_style::Reconcile) {
+        // WEAK, deliberately. The window owns the observer, the observer owns
+        // this closure; a strong handle here would close the loop and neither
+        // would ever be released — so the window would never deallocate and the
+        // KVO registrations would outlive the caller's last reference.
+        let weak = objc2::rc::Weak::from_retained(&self.window);
+        let observer = crate::icon_style::StyleObserver::new(self.mtm(), reconcile, move |style| {
+            if let Some(window) = weak.load() {
+                window.setAppearance(style.appearance().as_deref());
+            }
+        });
+        self.window.ivars().style_observer.replace(Some(observer));
     }
 }
 
