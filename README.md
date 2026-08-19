@@ -1,12 +1,16 @@
 # macos-liquid-glass
 
 [![crates.io](https://img.shields.io/crates/v/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
+[![Downloads](https://img.shields.io/crates/d/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
 [![MSRV](https://img.shields.io/crates/msrv/macos-liquid-glass?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/i-am-logger/macos-liquid-glass/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/i-am-logger/macos-liquid-glass/actions/workflows/ci.yml)
 [![docs.rs](https://img.shields.io/docsrs/macos-liquid-glass?logo=docsdotrs&logoColor=white)](https://docs.rs/macos-liquid-glass)
+[![codecov](https://codecov.io/gh/i-am-logger/macos-liquid-glass/branch/master/graph/badge.svg)](https://codecov.io/gh/i-am-logger/macos-liquid-glass)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/i-am-logger/macos-liquid-glass/badge)](https://scorecard.dev/viewer/?uri=github.com/i-am-logger/macos-liquid-glass)
 
 [![Nix](https://img.shields.io/badge/Nix-2b2b2b?logo=nixos&logoColor=white)](https://nixos.org)
 [![devenv](https://img.shields.io/badge/devenv-2b2b2b?logo=nixos&logoColor=white)](https://devenv.sh)
+[![macOS](https://img.shields.io/badge/macOS%2026%2B-2b2b2b?logo=apple&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/MIT-2b2b2b?logo=opensourceinitiative&logoColor=white)](LICENSE)
 
 > Liquid Glass windows on macOS that follow **System Settings ▸ Appearance ▸
