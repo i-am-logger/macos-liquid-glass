@@ -19,10 +19,20 @@ git_release_enable = true
 # so a beta does not present itself as the latest stable download.
 git_release_type = "auto"
 
-# Publishing requires merging a Release PR. An ordinary commit landing on master
-# does not publish, however it got there. crates.io is immutable, so the second
-# merge is the point.
-release_always = false
+# Publish whenever master carries a version that is not on crates.io.
+#
+# `false` deadlocks the FIRST release and cannot bootstrap out of it: with
+# nothing published there is no baseline, so release-plz computes the manifest
+# version as the next version, opens no Release PR ("the repository is already
+# up-to-date"), and the release job then refuses with "current commit is not
+# from a release PR". Green pipeline, nothing published, no way forward.
+#
+# The gate that matters is intact: `release-plz-release` requires BOTH
+# `devenv-checks` and `msrv` to have succeeded on the exact tree being
+# published, and neither can be skipped. What is given up is the second,
+# human-merge gate — worth revisiting once a crates.io baseline exists and
+# release-plz can propose bumps from conventional commits on its own.
+release_always = true
 
 # A release is triggered by changes to packaged files. README.md, LICENSE,
 # README.md, LICENSE and src/ ship inside the crate, so editing any of them needs a

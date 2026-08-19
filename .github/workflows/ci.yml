@@ -125,29 +125,6 @@ jobs:
       # consumer compiles when they `cargo test` this crate.
       - run: cargo check --all-features --all-targets
 
-  coverage:
-    name: Coverage
-    # Same reason as devenv-checks: the code under test is macOS-only.
-    runs-on: macos-latest
-    needs: [devenv-checks]
-    timeout-minutes: 30
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate coverage
-        run: cargo llvm-cov --lcov --output-path lcov.info
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          fail_ci_if_error: false
-
   # Publishes to crates.io, tags, and creates the GitHub release when a Release
   # PR has been merged. `release_always = false` in release-plz.toml means this
   # is a no-op on an ordinary feature merge — merging the Release PR is the act

@@ -45,16 +45,18 @@ decides the release:
 
 ## Releases
 
-Releases are automated and gated. release-plz opens a `chore: release` PR that
-bumps the version and writes the changelog; **merging that PR is what
-authorises the publish to crates.io.** Do not bump versions by hand and do not
-publish manually — release-plz reads its baseline from crates.io, and a manual
-publish or a hand-edited version desynchronises it.
+Releases are automated and gated on CI. When master carries a version that is
+not yet on crates.io, and both `Lint/UT` and `MSRV` have passed on that exact
+tree, release-plz publishes it, tags it and creates the GitHub release.
 
-The one exception is the **first** published version. With nothing on crates.io
-there is no baseline to bump from, so release-plz proposes whatever `Cargo.toml`
-already says. That version is therefore set by hand, in an ordinary PR, before
-the first release PR is merged.
+Normally you do not touch the version at all: land commits using
+[Conventional Commits](https://www.conventionalcommits.org/), and release-plz
+opens a `chore: release` PR that bumps `Cargo.toml` and writes `CHANGELOG.md`.
+Merging that PR is what ships. Do not publish manually — release-plz reads its
+baseline from crates.io, and a manual publish desynchronises it.
+
+Hand-editing the version is reserved for the first release of a new version
+series, where there is no baseline for release-plz to bump from.
 
 ## Code of Conduct
 

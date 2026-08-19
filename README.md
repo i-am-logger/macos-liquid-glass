@@ -5,7 +5,6 @@
 [![MSRV](https://img.shields.io/crates/msrv/macos-liquid-glass?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/i-am-logger/macos-liquid-glass/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/i-am-logger/macos-liquid-glass/actions/workflows/ci.yml)
 [![docs.rs](https://img.shields.io/docsrs/macos-liquid-glass?logo=docsdotrs&logoColor=white)](https://docs.rs/macos-liquid-glass)
-[![codecov](https://codecov.io/gh/i-am-logger/macos-liquid-glass/branch/master/graph/badge.svg)](https://codecov.io/gh/i-am-logger/macos-liquid-glass)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/i-am-logger/macos-liquid-glass/badge)](https://scorecard.dev/viewer/?uri=github.com/i-am-logger/macos-liquid-glass)
 
 [![Nix](https://img.shields.io/badge/Nix-2b2b2b?logo=nixos&logoColor=white)](https://nixos.org)
