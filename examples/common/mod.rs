@@ -34,14 +34,8 @@ use objc2_foundation::{
 
 /// Window size in points.
 const SIZE: NSSize = NSSize::new(560.0, 360.0);
-/// 32pt — the value the Swift oracle used (`b8f2058:223`), and what R20's band
-/// parity was measured against, so it is correct for this window.
-///
-/// Its stated provenance was NOT: the comment used to claim it was read as
-/// `contentView.height − contentLayoutRect.height`. Probed on 26A5406e that
-/// formula returns 0 on a plain titled window and 28 with
-/// `.fullSizeContentView` — no configuration yields 32. Treat 32 as chosen for
-/// this window's proportions.
+/// Height of the drawn title band, in points. Chosen for this window's
+/// proportions; it is not read from AppKit.
 const TITLEBAR_H: f64 = 32.0;
 /// Read from `effectiveCornerRadii` on a real *titled* window (16.0 on all four
 /// corners). The borderless window this app creates uses `NSNextStepFrame`,
@@ -57,16 +51,10 @@ const ROW_COUNT: usize = 12;
 
 // ------------------------------------------------------------- calibration
 //
-// Method note, NOT the derivation of the constants below: the body's dim is
-// measured as its share of the BAND — which is what the paper composites over —
-// not of the wallpaper.
-//   Clear > Dark : body luma 37.6 (R13) / band 61.4 = 0.61 -> implies alpha 0.39
-//   Clear > Light: body 100.9 / band 112.5           = 0.90 -> implies alpha 0.10
-// The shipped 0.22 / 0.12 are NOT those numbers: they were tuned against the
-// widget on the user's wallpaper (R12, reconfirmed R13). The 61.4 band reading
-// is also not in MEASUREMENTS.md; §1.3 records the ClearDark band at 72.6.
-// An earlier 0.64 came from comparing the body to the WALLPAPER instead of the
-// band; it over-darkened the surface.
+// `GN_PAPER_D` 0.22 and `GN_PAPER_L` 0.12 are tuned against the system widget
+// over one wallpaper rather than derived from a measurement, so they are not
+// necessarily right on another desktop. Each alpha below is overridable at run
+// time by the environment variable named in its doc.
 
 /// Extra body dim under a dark appearance (`GN_PAPER_D`). This is what makes
 /// the title bar read as a band.
@@ -79,9 +67,8 @@ fn paper_light() -> f64 {
 }
 /// Strength of the theme-colour wash under Tinted (`GN_TINT`).
 ///
-/// 0.20 is inherited from the Swift original and is **not measured** — no
-/// section of `MEASUREMENTS.md` records it. R15 establishes the band/body split
-/// below, not this alpha.
+/// 0.20 is **not measured**; it is a preference. The band/body split below is
+/// measured, this alpha is not.
 fn tint_alpha() -> f64 {
     env_f64("GN_TINT", 0.20)
 }
@@ -106,24 +93,14 @@ const SCRIPT: &[(&str, bool)] = &[
 
 // ------------------------------------------------------------------ colour
 //
-// The flat fills here are built in sRGB explicitly. That pins which colour space
-// the measured constants belong to; it is NOT a fix for an observed difference,
-// and the rationale this block used to carry was wrong on every point. Probed on
-// macOS 27.0 (26A5406e):
+// The flat fills below are built in sRGB explicitly, so the alpha constants
+// have a defined colour space rather than whatever `NSColor.black` happens to
+// be (Generic Gray Gamma 2.2, which cannot carry a hue at all).
 //
-//   NSColor(hue:saturation:brightness:alpha:)  -> sRGB IEC61966-2.1, and its
-//       components are bit-identical to the hand-rolled conversion below
-//       (0.02, 0.052, 0.10 both ways). It is NOT the calibrated space.
-//   NSColor.black                              -> Generic Gray Gamma 2.2. Not a
-//       device space, and it cannot carry a hue at all.
-//   blended(withFraction:of:) on two sRGB inputs -> Generic RGB.
-//
-// That last one matters: `primary`, `dim` and the title colour under Tinted all
-// come from a blend, so every Tinted TEXT colour is calibrated RGB no matter what
-// its inputs were. "Everything is sRGB" is therefore true of the flat fills,
-// false of the theme wash (used as the system hands it over — see
-// GN_TINT_SPACE), and false of the Tinted text. Left as-is because the Swift
-// oracle blended the same way and R20 measured parity with it.
+// Not every colour on the surface is sRGB. `blendedColorWithFraction:ofColor:`
+// returns Generic RGB, so the Tinted text colours are Generic RGB whatever
+// their inputs; the theme wash is used in whichever space the system hands it
+// over in unless `GN_TINT_SPACE=srgb`.
 //
 /// Black, in sRGB, at a given alpha.
 fn srgb_black(alpha: f64) -> Retained<NSColor> {
@@ -199,7 +176,7 @@ define_class!(
     /// invisible.
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "GlassTermContentView"]
+    #[name = "MacosLiquidGlassExampleContentView"]
     #[ivars = ContentIvars]
     struct TerminalContentView;
 
@@ -213,11 +190,8 @@ define_class!(
         /// The window is resizable, so the label frames must be recomputed
         /// whenever the surface changes size.
         ///
-        /// An earlier revision of THIS app (82cf233) ran layout only once from
-        /// `init`, which left the centred title and the monospaced rows at
-        /// their original 560pt widths after any edge drag (R19). The Swift
-        /// oracle was not guilty of it — `b8f2058` has an `onResize` hook and a
-        /// `setFrameSize` override, by the same mechanism used here.
+        /// Laying out only once from `init` leaves the centred title and the
+        /// monospaced rows at their original widths after any edge drag.
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, new_size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: new_size] };
@@ -231,12 +205,10 @@ define_class!(
 
         /// AppKit's own light/dark hook.
         ///
-        /// The Swift version had no equivalent: it inferred the appearance from
-        /// KVO on `AppleInterfaceStyle` plus a reconcile timer, and got away
-        /// with it only because the draw path re-read `effectiveAppearance`
-        /// each time. This is the documented route and fires for every cause —
-        /// the system setting, the window's own `appearance` being assigned,
-        /// and a move between screens.
+        /// The documented route, and it fires for every cause — the system
+        /// setting, the window's own `appearance` being assigned, and a move
+        /// between screens. Inferring light/dark from KVO on
+        /// `AppleInterfaceStyle` misses the last two.
         #[unsafe(method(viewDidChangeEffectiveAppearance))]
         fn view_did_change_effective_appearance(&self) {
             let dark = self.resolve_is_dark();
@@ -292,10 +264,8 @@ impl TerminalContentView {
 
     /// Whether this view's effective appearance resolves to Dark.
     ///
-    /// The crate's resolver, not a hand-rolled one. This used to be a verbatim
-    /// 12-line copy of `GlassWindow::is_dark`, written because that method
-    /// cannot be applied to an `NSView` — which is exactly why the resolver is
-    /// now a free function.
+    /// The crate's free resolver, which takes an appearance rather than a
+    /// window and so applies to an `NSView` too.
     fn resolve_is_dark(&self) -> bool {
         macos_liquid_glass::is_dark(&self.effectiveAppearance())
     }
@@ -346,14 +316,11 @@ impl TerminalContentView {
         clip.addClip();
 
         // Under Tinted the theme colour washes the BAND at full `GN_TINT` alpha
-        // and the body at a quarter of it (R15, correcting R1's uniform-wash
-        // model). R1's "washes the WHOLE surface" conclusion is WITHDRAWN and
-        // must not be restated here — leaving superseded rationale stacked above
-        // its replacement is the defect R19 records three instances of.
+        // and the body at `GN_TBODY` of it.
         //
         // Drawn here rather than via `NSGlassEffectView.tintColor`, which
         // despite being documented as a bias floods the surface to a flat
-        // saturated slab at full strength (R4).
+        // saturated slab at full strength.
         if let Some(tint) = self.ivars().tint.borrow().as_ref() {
             let band = NSRect::new(
                 NSPoint::new(0.0, 0.0),
@@ -374,9 +341,8 @@ impl TerminalContentView {
         srgb_black(alpha).setFill();
         // NSBezierPath::fillRect, NOT NSRectFill. They are not interchangeable:
         // NSRectFill composites with Copy, which wipes the material instead of
-        // dimming it. Measured against the Swift oracle, swapping to NSRectFill
-        // made the whole-window MAE 18x worse (0.0082 against 0.00045) while
-        // changing the band not at all.
+        // dimming it: swapping to NSRectFill makes the whole-window MAE 18x
+        // worse (0.0082 against 0.00045) while changing the band not at all.
         NSBezierPath::fillRect(paper);
 
         NSGraphicsContext::restoreGraphicsState_class();
@@ -388,20 +354,9 @@ impl TerminalContentView {
 
         // `GN_TINT_SPACE=srgb` converts the system's theme colour into sRGB
         // before washing with it; `native` (the default) uses it exactly as
-        // handed back.
-        //
-        // Native is the default because it is what the reference was fitted
-        // against: the Swift original washed with the colour as-is, and its
-        // constants were tuned by comparing against a live widget rendered by
-        // the system, which is also using the colour natively.
-        //
-        // Measured, the conversion is not free. Under Tinted ▸ Light it spread
-        // +0.11 luma across band, body AND text (MAE 0.0011); native confines
-        // the difference to the band alone and leaves body and text exact
-        // (MAE 0.00045). Note this only chooses the better of two imperfect
-        // options — native does NOT reach pixel-identical either. Both Tinted
-        // tokens carry a ~0.4 luma band residual whose cause is still open;
-        // see MEASUREMENTS.md R20.
+        // handed back, which is what the system itself does. Converting spreads
+        // a small brightness shift across the band, the body and the text;
+        // native confines it to the band.
         // `retain`, not `clone`: `tint()` hands out a borrowed `&NSColor` — it
         // retains nothing — so taking ownership is an explicit retain.
         let tint = style.tint().map(|c| {
@@ -501,7 +456,7 @@ struct DelegateState {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "GlassTermAppDelegate"]
+    #[name = "MacosLiquidGlassExampleAppDelegate"]
     #[ivars = DelegateState]
     struct AppDelegate;
 
@@ -547,11 +502,8 @@ define_class!(
             // must happen BEFORE the window is shown.
             //
             // Ordered the other way round, the window is on screen for one or
-            // more frames with no material tint applied. Measured: a capture
-            // that raced that gap read the band 3.9 luma brighter than a
-            // settled one, which is 40x the real difference between this build
-            // and the Swift original and would have been read as a porting
-            // error.
+            // more frames with no material tint applied. A capture that races
+            // that gap reads the band 3.9 luma brighter than a settled one.
             let win_for_cb = window.clone();
             let glass_for_cb = glass.clone();
             let content_for_cb = content.clone();
@@ -593,9 +545,8 @@ impl AppDelegate {
 /// style change applies one light/dark value to both. That is narrower than
 /// "they cannot disagree": under an `*Automatic` token the appearance is
 /// inherited, and a *system* light/dark flip reaches the view callback and the
-/// material independently. It is still an improvement on an earlier revision
-/// of this app (82cf233), which read the *app's* appearance in one place and a
-/// view's in another; the Swift oracle read the window's in both.
+/// material independently. Read the window's appearance in both places; reading
+/// the app's in one and a view's in the other lets them disagree.
 fn apply(
     window: &GlassWindow,
     glass: &GlassSurface,
@@ -622,8 +573,8 @@ fn apply(
     // `material_tint` resolved rather than a re-read of GN_GT_D/GN_GT_L. Those
     // two are only consulted when GN_GTINT is unset; printing them regardless
     // would report two alphas that were not applied and never name the one that
-    // was — exactly the "inert knob" defect R19 records in the Swift, where the
-    // harness's only per-run record named knobs that reached no drawing code.
+    // was, which is how a knob comes to look live while reaching no drawing
+    // code.
     eprintln!(
         "[{}] paperD={} paperL={} tint={} tbody={} gt={} hue={} hsat={} \
          poll={:?} glass={} shadow={} {} tinted={} dark={}",
@@ -647,25 +598,19 @@ fn apply(
 /// `GN_POLL` — seconds between forced-sync reconcile passes. `0` disables the
 /// pass entirely and relies on KVO alone.
 ///
-/// An earlier revision of THIS app (82cf233) clamped this unconditionally to a
-/// 0.05s floor, so `GN_POLL=0` meant 20 syncs a second — the exact opposite of
-/// what the name implies (R19). The Swift oracle guarded it correctly.
+/// `0` must be checked before the clamp: clamping unconditionally to the 0.05s
+/// floor would make `GN_POLL=0` mean 20 syncs a second, the opposite of what it
+/// says.
 fn reconcile() -> Reconcile {
     let v = env_f64("GN_POLL", 0.75);
     if v <= 0.0 {
         return Reconcile::KvoOnly;
     }
     // `try_from_secs_f64`, not `from_secs_f64`: the panicking constructor
-    // rejects +inf and anything at or above u64::MAX seconds, and this is
-    // evaluated inside `applicationDidFinishLaunching:`, so the panic unwinds
-    // into Objective-C and ABORTS rather than reporting a bad knob. Measured:
-    // Measured here, running the built binary directly: GN_POLL=inf and
-    // GN_POLL=1e300 both died, printing "libc++abi: terminating due to uncaught
-    // foreign exception". A later audit could not reproduce that exact text and
-    // saw an ordinary Rust panic exiting 101 instead — the two runs used
-    // different harnesses and the discrepancy is unresolved. What is not in
-    // doubt is that both values killed the process before the window appeared.
-    // A value Duration cannot represent now means what GN_POLL=0 means.
+    // rejects +inf and anything at or above u64::MAX seconds, and this runs
+    // inside `applicationDidFinishLaunching:`, where a panic unwinds into
+    // Objective-C and aborts the process instead of reporting a bad knob. A
+    // value `Duration` cannot represent means what `GN_POLL=0` means.
     std::time::Duration::try_from_secs_f64(v.max(0.05)).map_or(Reconcile::KvoOnly, Reconcile::Every)
 }
 
@@ -675,11 +620,10 @@ fn reconcile() -> Reconcile {
 /// Appearance-dependent: a black tint strong enough for Dark would wrongly
 /// darken Light too. Returns `None` when the strength is zero.
 ///
-/// The colour stays a dark, slightly saturated blue rather than pure black.
-/// Measured at 0.50/0.70/0.85 alpha, a BLACK tint left the blue ratio B/R
-/// pinned at 1.45 while luma fell 44.5 → 27.0 → 13.3: black scales all channels
-/// equally, so it darkens without shifting hue, and darkening more costs colour.
-/// A real widget sits at B/R 2.6–2.8. This is a preference, not a match.
+/// The colour is a dark, slightly saturated blue (`GN_HUE` 0.60, `GN_HSAT`
+/// 0.80) rather than pure black: black scales every channel equally, so it
+/// cannot shift the material's hue, only scale the colour down — the harder it
+/// darkens, the less colour survives.
 /// Returns the colour and the alpha it resolved, so the caller can log the
 /// value that was actually applied rather than re-deriving it and getting it
 /// wrong when `GN_GTINT` overrides the pair.
@@ -719,12 +663,6 @@ fn material_tint(is_dark: bool) -> (Option<Retained<NSColor>>, f64) {
 /// ends the glass edge at a boundary rather than letting it dissolve into the
 /// desktop over several pixels, and that boundary is most of what makes a glass
 /// surface read as an object rather than a bright patch of wallpaper.
-///
-/// This is the one deliberate behavioural divergence from the Swift original,
-/// which set `hasShadow` unconditionally. It is a knob rather than a hardcoded
-/// choice precisely so the divergence can be measured: `GN_SHADOW=always`
-/// reproduces the Swift exactly, and the A/B run under a light style is
-/// pixel-identical with it set.
 fn want_shadow(is_dark: bool) -> bool {
     match std::env::var("GN_SHADOW").as_deref() {
         Ok("always") => true,
@@ -741,8 +679,7 @@ fn want_shadow(is_dark: bool) -> bool {
 ///
 /// Observed, not measured: `regular` renders as a flat near-white slab in Aqua
 /// with no glass left in it, unlike the reference widget, which under
-/// Clear ▸ Light is translucent with the wallpaper legible through it. §4 still
-/// records the clear-vs-regular comparison as open.
+/// Clear ▸ Light is translucent with the wallpaper legible through it.
 fn glass_style() -> GlassStyle {
     match glass_style_name().as_str() {
         "regular" => GlassStyle::Regular,
@@ -755,9 +692,8 @@ fn glass_style_name() -> String {
 }
 
 /// Read an `f64` knob from the environment, falling back to the default
-/// documented on each knob above — measured where `MEASUREMENTS.md` records
-/// one, inherited from the Swift original where it does not. Knobs are
-/// environment variables so a value can be swept rather than guessed.
+/// documented on each knob above. Knobs are environment variables so a value
+/// can be swept rather than guessed.
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
         .ok()
@@ -765,27 +701,20 @@ fn env_f64(key: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
-/// `GN_ORIGIN=x,y` in AppKit screen coordinates. Malformed input is ignored
-/// rather than fatal — a harness sweeping values should not be able to stop the
-/// window appearing at all.
+/// `GN_ORIGIN=x,y` in AppKit screen coordinates. Malformed or out-of-range
+/// input is ignored rather than fatal, so a bad value cannot stop the window
+/// appearing at all.
 ///
 /// "Parses as f64" is NOT sufficient for that promise. `nan`, `inf` and any
 /// coordinate large enough to push the frame outside AppKit's INT_MIN..INT_MAX
 /// box all parse, and `setFrameOrigin:` then fails an internal assertion
 /// (`_NSWindowSetFrameIvar`, NSWindow.m:1076) and raises. The raise unwinds out
-/// of `applicationDidFinishLaunching:`, so the observer is never installed, the
-/// window never shows, and the record line is never printed.
+/// of `applicationDidFinishLaunching:`, so the observer is never installed and
+/// the window never shows.
 ///
-/// What happens next was measured twice, differently, and is UNRESOLVED: one
-/// run recorded the process surviving on the GN_SECS timer and exiting 0 with a
-/// zero-byte log; another recorded an immediate SIGABRT (exit 134,
-/// "Rust cannot catch foreign exceptions"), on the grounds that the raise
-/// cannot unwind through this Rust frame. Either way the run produces no
-/// window and no record line, which is what the guard below prevents.
-///
-/// Measured boundary on the x axis: `2147483087,0` places the window (the frame
-/// ends exactly at INT_MAX); `2147483088,0` produced the silent zero-byte run.
-/// A mistyped exponent reaches that, so this is not only about `nan`.
+/// The limit is a containment test on the whole frame, `x + width <= INT_MAX`,
+/// not on the point alone — see `finite_coordinate`. A mistyped exponent
+/// reaches it, so this is not only about `nan`.
 fn origin_from_env() -> Option<NSPoint> {
     let raw = std::env::var("GN_ORIGIN").ok()?;
     let (x, y) = raw.split_once(',')?;

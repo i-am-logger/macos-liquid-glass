@@ -1,8 +1,6 @@
-# A root package WITH a workspace member, not a virtual manifest. `[package]`
-# stays, so devenv.nix's enterShell (which reads .package.name via
-# builtins.fromTOML) and release-plz's single-crate tagging both keep working —
-# that was the objection that ruled a workspace out for splitting the library,
-# and it does not apply to a non-published tooling member.
+# A root package with a workspace member, not a virtual manifest. `[package]`
+# has to stay: devenv.nix reads `.package.name` via `builtins.fromTOML`, and
+# release-plz's `v{{ version }}` tag names this crate alone.
 [workspace]
 members = ["xtask"]
 
@@ -35,7 +33,7 @@ exclude = [
     "nix/",
     "statix.toml",
     "release-plz.toml",
-    "run.sh",
+
 ]
 
 # docs.rs builds on Linux, where this crate is empty. Point it at Darwin or the
@@ -59,12 +57,13 @@ glass = []
 window = []
 # The system "Icon & widget style" tracker: the nine-token enum, the CFPrefs
 # reader, KVO on the global domain, and the reconcile pass. Independently
-# useful — a consumer that already has its own NSWindow (wezterm does) takes
-# this alone with `default-features = false`.
+# useful — a consumer that already has its own NSWindow takes this alone with
+# `default-features = false`.
 icon-style = []
-# One undocumented AppKit selector, OFF by default:
-# `NSWorkspace currentIconAppearanceConfiguration`, the only source of the
-# resolved theme colour.
+# Three undocumented selectors, OFF by default: `NSWorkspace
+# currentIconAppearanceConfiguration`, plus `resolvedIconTintColor` and
+# `iconAppearanceTheme` on the `SLSIconAppearanceConfiguration` it returns.
+# That chain is the only source of the resolved theme colour.
 #
 # App Store Review Guideline 2.5.1 is "Apps may only use public APIs", with no
 # read-only or respondsToSelector-gated exemption, so enabling this is a
@@ -126,7 +125,9 @@ required-features = ["window", "glass", "icon-style"]
 name = "borderless"
 required-features = ["window", "glass", "icon-style"]
 # `cargo test` BUILDS examples but does not RUN their tests unless the target
-# opts in. Without this the knob tests below compile, pass locally under
-# `cargo test --example borderless`, and are silently absent from `dev-ci` and CI
-# — green, covering nothing.
+# opts in. The knob tests live in the `#[cfg(test)]` module of
+# `examples/common/mod.rs`, which `examples/borderless.rs` pulls in with
+# `#[path]`. Without `test = true` they still pass under an explicit
+# `cargo test --example borderless`, so the gap is invisible locally, but never
+# run under the bare `cargo test` that `dev-ci` and CI both use.
 test = true

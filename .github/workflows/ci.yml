@@ -125,10 +125,11 @@ jobs:
       # consumer compiles when they `cargo test` this crate.
       - run: cargo check --all-features --all-targets
 
-  # Publishes to crates.io, tags, and creates the GitHub release when a Release
-  # PR has been merged. `release_always = false` in release-plz.toml means this
-  # is a no-op on an ordinary feature merge — merging the Release PR is the act
-  # that authorises a publish.
+  # Publishes to crates.io, tags, and creates the GitHub release. release-plz.toml
+  # sets `release_always = true`, so this publishes whenever master carries a
+  # version that is not yet on crates.io — there is no separate human-merge gate.
+  # What gates it is `needs`: both `devenv-checks` and `msrv` must have SUCCEEDED
+  # on the exact tree being published.
   release-plz-release:
     name: Release
     # macOS, because release-plz.toml sets `semver_check = true`. On Linux this

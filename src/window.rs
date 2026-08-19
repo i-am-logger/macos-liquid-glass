@@ -306,12 +306,12 @@ impl GlassWindow {
 
     /// Whether the window casts a shadow.
     ///
-    /// Not set by default, and deliberately not a constructor argument. This is
-    /// a preference, NOT a measurement — `MEASUREMENTS.md` contains no shadow
-    /// reading of any kind: over a light material the shadow reads as a hard
-    /// dark edge, where the system's own light glass surfaces appear to take
-    /// their definition from a faint bright rim. The caller decides, because
-    /// only the caller knows which appearance the surface resolved to.
+    /// Not set by the constructors, and not a constructor argument: AppKit
+    /// leaves the shadow ON for both shapes this crate builds, so this is the
+    /// call that turns it off. Over a light material the shadow reads as a hard
+    /// dark edge, where the system's own light glass surfaces take their
+    /// definition from a faint bright rim. Only the caller knows which
+    /// appearance the surface resolved to, so the choice is theirs.
     pub fn set_has_shadow(&self, has_shadow: bool) {
         if self.window.hasShadow() == has_shadow {
             return;

@@ -2,9 +2,7 @@
 //!
 //! # What this crate does and does not do
 //!
-//! **This crate reads these settings. It does not act on them for you**, and
-//! that is a deliberate policy rather than an oversight — the alternative was
-//! considered and rejected, so here is the reasoning.
+//! **This crate reads these settings. It does not act on them for you.**
 //!
 //! *Reduce Transparency* asks for a surface that is not see-through. There is
 //! no way to satisfy it from inside `GlassSurface`: `NSGlassEffectView` has
@@ -14,10 +12,8 @@
 //! contrast and layout that go with it. That substitute is the caller's
 //! content, not something a wrapper around one AppKit view can synthesise.
 //!
-//! So this module makes the check one call and says plainly whose job the rest
-//! is. What it must not be is silent: a crate that spends most of its size
-//! following a *cosmetic* preference and never mentions an *accessibility* one
-//! has its priorities backwards, however the code is factored.
+//! This module makes the check one call; building the opaque alternative is
+//! the caller's job.
 //!
 //! # The shape a caller wants
 //!

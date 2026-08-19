@@ -564,13 +564,10 @@ pub fn current() -> WidgetStyle {
 
 /// The global-domain keys whose changes drive a widget-style surface.
 ///
-/// All three were verified to fire KVO on `NSUserDefaults.standard`:
-/// `AppleIconAppearanceTheme` 4/4 style changes, `AppleAccentColor` 3/3 theme
-/// colour changes, `AppleInterfaceStyle` 1/1 appearance changes.
+/// All three fire KVO on `NSUserDefaults.standard`.
 ///
-/// The theme colour is written to **`AppleAccentColor`**, found by diffing
-/// `defaults read -g` across a colour change — not to the plausible-sounding
-/// `AppleIconAppearanceTintColor`, which the diff never showed being written.
+/// The theme colour is written to **`AppleAccentColor`**, not to
+/// `AppleIconAppearanceTintColor`.
 pub const WATCHED_KEYS: &[&str] = &[
     ICON_APPEARANCE_KEY,
     "AppleAccentColor",
@@ -765,11 +762,11 @@ impl StyleObserver {
     /// same reason, leaving the choice of `Cell`/`RefCell`/`UnsafeCell` to the
     /// consumer, whose use case determines which is sound.
     ///
-    /// Note the pass is scheduled in `NSDefaultRunLoopMode` (NSTimer.h), so it
-    /// should not tick during a live resize drag or while a menu is tracking,
-    /// and latency would degrade to KVO's during those. Documented, not
-    /// measured here. The KVO hop itself survives tracking, because
-    /// `performSelectorOnMainThread:` uses common modes (NSThread.h).
+    /// The pass is scheduled in `NSDefaultRunLoopMode` (NSTimer.h), so it does
+    /// not tick during a live resize drag or while a menu is tracking, and
+    /// latency falls back to KVO's for the duration. The KVO hop itself
+    /// survives tracking, because `performSelectorOnMainThread:` uses common
+    /// modes (NSThread.h).
     ///
     /// # Panics
     ///
@@ -818,13 +815,10 @@ impl StyleObserver {
         // Clamped HERE, in the library, not in the caller. `NSTimer` treats an
         // interval <= 0 as 0.1 ms, and each tick is a forced
         // `CFPreferencesAppSynchronize` plus a workspace-configuration read:
-        // measured at ~9600 ticks/sec and ~6% of a core for `Duration::ZERO`,
-        // against 0.0% at the 0.75s default. The module's "0.0% CPU even at
-        // 3 syncs/sec" figure does not extrapolate 3200x.
-        //
-        // The reference app clamps too, but a consumer taking `icon-style`
-        // standalone does not go through it, and a named `Every(..)` still
-        // invites a tiny interval as the way to make it fast.
+        // `Duration::ZERO` runs ~9600 ticks/sec and costs ~6% of a core,
+        // against 0.0% at the 0.75s default. The reference app applies the
+        // same 50 ms floor, but a consumer using `icon-style` directly does
+        // not go through it.
         const FLOOR: Duration = Duration::from_millis(50);
         let interval = match reconcile {
             Reconcile::KvoOnly => None,
@@ -1104,7 +1098,7 @@ mod tests {
 
     /// `only_the_tinted_family_carries_a_tint` passes `None` for all nine
     /// themes, so it asserts the flag and never that the colour is threaded
-    /// through. Changing `6 => (Tinted, Auto, tint)` to `None` passed.
+    /// through to the tinted family.
     #[test]
     fn the_tint_reaches_exactly_the_tinted_themes() {
         for theme in [0, 1, 2, 3, 4, 5, 6, 7, 8, 99] {

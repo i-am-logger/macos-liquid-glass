@@ -211,11 +211,9 @@ fn launch(app: &Path, tag: &str) -> Result<(), String> {
         .status();
 
     // /tmp explicitly, NOT std::env::temp_dir(). On macOS that returns the
-    // per-user $TMPDIR (/var/folders/...), and the out-of-tree measurement
-    // harness reads /tmp/<example>_<tag>.log. Kept in /tmp rather than $TMPDIR,
-    // which is per-user and per-session and so is not a stable path for a
-    // capture harness running outside the app. Previously
-    // every script that consumes the per-run record.
+    // per-user $TMPDIR (/var/folders/...), which is per-user and per-session
+    // and so is not a stable path for anything reading the log from outside
+    // this process.
     let log = PathBuf::from("/tmp").join(format!("{EXAMPLE}_{tag}.log"));
     let _ = fs::write(&log, b"");
 

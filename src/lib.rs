@@ -39,7 +39,7 @@
 //! only use public APIs", with no `respondsToSelector:` exemption — a crate
 //! reaching private selectors by default would hand every consumer a submission
 //! liability they never opted into. Without it `icon-style` still tracks the
-//! style; only `icon_style::WidgetStyle::tint` becomes unavailable, because
+//! style; only `icon_style::WidgetStyle::tint` stops reporting a colour, because
 //! the theme colour has no public source.
 //!
 //! # Example
@@ -54,6 +54,7 @@
 //! configuration this crate advertises. Verify a change here with `cargo test`,
 //! not `cargo check`: `check` does not compile doctests.
 //!
+
 #![cfg_attr(
     all(feature = "window", feature = "glass", feature = "icon-style"),
     doc = "```no_run"

@@ -177,10 +177,8 @@ impl GlassSurface {
     ///
     /// If `frame` contains a NaN. AppKit traps on such a frame inside
     /// `initWithFrame:` with no diagnostic at all; the assertion prints the
-    /// frame first. Infinite and negative values are **not** rejected, because
-    /// they were measured to work — see `checked_frame`'s note in the source.
-    ///
-    /// [`set_style`]: GlassSurface::set_style
+    /// frame first. Infinite and negative values are accepted — AppKit clamps
+    /// or normalises them.
     #[must_use = "a GlassSurface does nothing until it is installed as a content view"]
     pub fn new(
         mtm: MainThreadMarker,

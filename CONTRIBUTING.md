@@ -17,19 +17,45 @@ Everything below assumes you are inside that shell (or run each command as
 Run the full local pipeline:
 
 ```bash
-dev-ci
+devenv test
 ```
 
-This is not an approximation of CI — `.github/workflows/ci.yml` runs
-`devenv test`, which runs the same `tasks."test:*"` set defined in
-`devenv.nix`. A green `dev-ci` locally means a green PR check, because both
-execute the same nix-defined suite. If you want to run one piece while
-iterating, `enterShell` lists the individual scripts (`dev-fmt`, `dev-lint`,
-`dev-check`, `dev-test`).
+This is not an approximation of the `Lint/UT` job: `.github/workflows/ci.yml`
+runs `devenv test` as well, and `devenv test` runs the `tasks."test:*"` set
+defined in `devenv.nix`, so both execute the same nix-defined suite by
+construction. `MSRV` is a separate job — the shell pins one toolchain and ships
+no rustup, so it cannot be a task.
 
-**Add a check by adding a task in `devenv.nix`, never by adding a step to the
+While iterating, `dev-ci` is a faster subset — treefmt, clippy, `cargo check`
+and `cargo test` at default features — and the individual scripts `enterShell`
+lists (`dev-fmt`, `dev-lint`, `dev-check`, `dev-test`) are narrower still.
+Neither covers `test:features`, `test:docs` or `test:package`, so neither
+substitutes for `devenv test` before a PR.
+
+`.github/workflows/ci.yml` runs `devenv test`, which runs the `tasks."test:*"`
+set defined in `devenv.nix`: `test:fmt`, `test:clippy`, `test:check`,
+`test:unit`, `test:features`, `test:docs` and `test:package`. Run `devenv test`
+to reproduce the `Lint/UT` job exactly.
+
+`dev-ci` is a faster subset — fmt, clippy, check and test at default features.
+It skips the eight-combination feature matrix, the per-combination rustdoc
+lints and `cargo package`, so a green `dev-ci` does not imply a green PR check.
+To run one piece while iterating, `enterShell` lists the individual scripts
+(`dev-fmt`, `dev-lint`, `dev-check`, `dev-test`).
+
+CI also runs an `MSRV` job, the one check that is not a devenv task: the shell
+pins a single toolchain and ships no rustup, so it cannot compile against the
+second compiler that check needs. Nothing local covers it.
+
+**Add a check by adding a task in `devenv.nix`, not by adding a step to the
 workflow.** A step that exists only in CI is a step you cannot run locally, and
 that is exactly the divergence this setup exists to prevent.
+
+The one standing exception is the `MSRV` job. The dev shell pins a single
+toolchain and ships no rustup, so it cannot compile against a second compiler;
+verifying a different toolchain is the one thing a pinned shell cannot do. It
+reads `rust-version` from `Cargo.toml`, so it tests the MSRV that is actually
+declared.
 
 ## Commit messages
 
@@ -41,7 +67,11 @@ decides the release:
 - `feat:` → minor
 - `feat!:` / `BREAKING CHANGE:` in the body → major
 
-`chore:`, `docs:`, `test:`, `refactor:` and `ci:` do not trigger a release.
+`release_commits` is unset, so release-plz considers every commit: anything
+that is not `feat:` or a breaking change yields a patch bump. Only commits
+touching packaged files count — a change confined to `.github/`, `devenv.*`,
+`nix/` or `xtask/` produces no release, because nothing in the published
+package moved.
 
 ## Releases
 

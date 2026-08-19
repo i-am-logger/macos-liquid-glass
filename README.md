@@ -125,7 +125,7 @@ was taken against.
 | `glass` | yes | the `NSGlassEffectView` surface and its runtime availability guard |
 | `window` | yes | a transparent window hosting one glass surface, titled or borderless |
 | `icon-style` | yes | the Icon & widget style tracker — **usable on its own** |
-| `private-spi` | **no** | two undocumented selectors — see below |
+| `private-spi` | **no** | one undocumented AppKit selector and the two private-class getters it reaches — see below |
 
 `macos_liquid_glass::is_dark` and `macos_liquid_glass::accessibility` are behind no feature at
 all: the first is the crate's only light/dark resolver and both halves need it,
@@ -215,9 +215,7 @@ breaking change straight through.
 
 ## Known limitations
 
-A macos-liquid-glass surface reads **less saturated than a system desktop widget**: on an
-identical backdrop the widget's bare glass carries chroma 45.9 against this
-window's 32.6, roughly a 40% difference. The *hue* matches closely — B/R 1.71
-against the widget's 1.77 over the same backdrop — so the gap is saturation, not
-colour. Closing it appears to need an undocumented material variant, which this
-crate does not use.
+A glass surface from this crate reads **less saturated than a system desktop
+widget**. Measured glass-to-glass over an identical backdrop, the widget's bare
+band carries chroma 45.9 against this window's 32.6 — a material difference of
+about 40%. This crate does not close that gap.

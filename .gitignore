@@ -1,7 +1,7 @@
 # Rust/Cargo
 target/
-# Cargo.lock IS committed. This template produces a binary; for a library,
-# delete it and add `Cargo.lock` here instead.
+# Cargo.lock is committed. This repo builds its own binaries — the xtask and the
+# two examples — so the lockfile pins what CI and local runs compile.
 
 # Devenv
 .devenv*

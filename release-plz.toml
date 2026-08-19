@@ -8,9 +8,8 @@
 # change is rejected and the version escalated to satisfy semver.
 semver_check = true
 
-# Single-crate template, so a plain `vX.Y.Z` tag. A workspace instantiated from
-# this template should switch to "{{ package }}-v{{ version }}" so each member
-# gets its own tag.
+# Only one crate here publishes — `xtask` is `publish = false` — so a plain
+# `vX.Y.Z` tag is unambiguous.
 git_tag_name = "v{{ version }}"
 
 git_release_enable = true
@@ -19,28 +18,25 @@ git_release_enable = true
 # so a beta does not present itself as the latest stable download.
 git_release_type = "auto"
 
-# Publish whenever master carries a version that is not on crates.io.
+# Publish whenever master carries a version that is not on crates.io, rather
+# than only from a commit belonging to a merged Release PR.
 #
-# `false` deadlocks the FIRST release and cannot bootstrap out of it: with
-# nothing published there is no baseline, so release-plz computes the manifest
-# version as the next version, opens no Release PR ("the repository is already
-# up-to-date"), and the release job then refuses with "current commit is not
-# from a release PR". Green pipeline, nothing published, no way forward.
+# `false` cannot bootstrap a crate with nothing published: with no baseline,
+# release-plz treats the manifest version as the next version and opens no
+# Release PR, while the release job refuses any commit that is not from one.
 #
-# The gate that matters is intact: `release-plz-release` requires BOTH
+# The publish gate is therefore CI alone — `release-plz-release` requires both
 # `devenv-checks` and `msrv` to have succeeded on the exact tree being
-# published, and neither can be skipped. What is given up is the second,
-# human-merge gate — worth revisiting once a crates.io baseline exists and
-# release-plz can propose bumps from conventional commits on its own.
+# published — rather than a separate approval of the release itself.
 release_always = true
 
-# A release is triggered by changes to packaged files. README.md, LICENSE,
-# README.md, LICENSE and src/ ship inside the crate, so editing any of them needs a
-# new version before crates.io shows it.
+# A release is triggered by changes to packaged files. README.md, LICENSE and
+# src/ ship inside the crate, so editing any of them needs a new version before
+# crates.io shows it.
 #
-# .github/, devenv.*, nix/, run.sh and statix.toml are NOT packaged — but only
-# because Cargo.toml carries an explicit `exclude`. Without it cargo ships
-# everything not gitignored, and this note was false for exactly that reason.
+# .github/, devenv.*, nix/ and statix.toml are NOT packaged, because Cargo.toml
+# carries an explicit `exclude`; without it cargo ships everything not
+# gitignored. xtask/ is a nested package, which cargo never packages either way.
 #
 # Check what ships with `cargo package --list`.
 
