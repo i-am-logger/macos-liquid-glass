@@ -6,7 +6,7 @@ members = ["xtask"]
 
 [package]
 name = "macos-liquid-glass"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 edition = "2024"
 # Edition 2024 selects resolver 3, which makes rust-version affect dependency
 # resolution: cargo will not pick a dependency needing a newer compiler. Set it
