@@ -14,6 +14,11 @@
 
 ![Two windows over a desktop: a titled one with traffic lights, and a borderless one with none](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/macos-liquid-glass.jpg)
 
+The same window under three of the nine Icon & widget style tokens — Default,
+Dark, and Tinted taking the system accent — over an identical backdrop:
+
+![The same window rendered under the Default, Dark and Tinted icon styles](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/styles.jpg)
+
 Putting a window on `NSGlassEffectView` is the easy part. Making it *agree* with
 the widget style, and keep agreeing as the user changes it, is not: the
 preference holds nine tokens behind a four-option UI, no notification centre
