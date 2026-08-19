@@ -1,0 +1,132 @@
+# A root package WITH a workspace member, not a virtual manifest. `[package]`
+# stays, so devenv.nix's enterShell (which reads .package.name via
+# builtins.fromTOML) and release-plz's single-crate tagging both keep working —
+# that was the objection that ruled a workspace out for splitting the library,
+# and it does not apply to a non-published tooling member.
+[workspace]
+members = ["xtask"]
+
+[package]
+name = "macos-liquid-glass"
+version = "1.0.0-beta.1"
+edition = "2024"
+# Edition 2024 selects resolver 3, which makes rust-version affect dependency
+# resolution: cargo will not pick a dependency needing a newer compiler. Set it
+# to the highest rust-version in the tree, measured with `cargo msrv find`.
+rust-version = "1.85"
+authors = ["i-am-logger"]
+description = "Liquid Glass windows on macOS that follow the system Icon & widget style"
+license = "MIT"
+repository = "https://github.com/i-am-logger/macos-liquid-glass"
+keywords = ["macos", "appkit", "liquid-glass", "window", "objc2"]
+categories = ["gui", "os::macos-apis"]
+# A blocklist: without it cargo ships everything not gitignored. Check the
+# result with `cargo package --list`.
+exclude = [
+    ".github/",
+    "docs/",
+    "MEASUREMENTS.md",
+    ".cargo/",
+    "xtask/",
+    ".envrc",
+    "devenv.nix",
+    "devenv.lock",
+    "devenv.yaml",
+    "nix/",
+    "statix.toml",
+    "release-plz.toml",
+    "run.sh",
+]
+
+# docs.rs builds on Linux, where this crate is empty. Point it at Darwin or the
+# published documentation would show nothing at all.
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+all-features = true
+
+[features]
+# `glass` is listed explicitly rather than implied by `window` — see the note
+# on `window` below.
+default = ["window", "glass", "icon-style"]
+# The NSGlassEffectView surface and its runtime availability guard.
+glass = []
+# The borderless, transparent, shadowed window that hosts a glass surface.
+#
+# Deliberately does NOT imply `glass`: adding a feature edge later is
+# non-breaking, removing one is not, so the reversible choice is to ship
+# without it.
+window = []
+# The system "Icon & widget style" tracker: the nine-token enum, the CFPrefs
+# reader, KVO on the global domain, and the reconcile pass. Independently
+# useful — a consumer that already has its own NSWindow (wezterm does) takes
+# this alone with `default-features = false`.
+icon-style = []
+# One undocumented AppKit selector, OFF by default:
+# `NSWorkspace currentIconAppearanceConfiguration`, the only source of the
+# resolved theme colour.
+#
+# App Store Review Guideline 2.5.1 is "Apps may only use public APIs", with no
+# read-only or respondsToSelector-gated exemption, so enabling this is a
+# submission liability the consumer must opt into knowingly.
+#
+# WITHOUT it `icon-style` still tracks the style: the nine-token enum, the
+# CFPreferences read, KVO and the reconcile pass are all public API, and
+# `WidgetStyle::is_tinted` still answers correctly. Only `WidgetStyle::tint()`
+# reports `None`.
+#
+# Cargo features UNIFY across the dependency graph: if ANY crate in the build
+# enables this, it is enabled for everyone, and an application author who never
+# asked for it gets no signal. Audit with:
+#   cargo tree -e features -i macos-liquid-glass
+private-spi = []
+
+# Every AppKit class this crate touches is in objc2-app-kit's default set (306
+# of its 314 features are on by default), so there is no explicit feature list
+# to keep in sync. If build times become a problem, `default-features = false`
+# plus an explicit list is the trim — the compiler names each missing feature.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+# No dispatch2. The KVO callback must ENQUEUE rather than act — it arrives while
+# CFPrefs holds its own lock — and `performSelectorOnMainThread:…:waitUntilDone:NO`
+# is documented to enqueue even when already on the main thread. dispatch2's
+# `run_on_main` runs the closure INLINE in that case, which is precisely the
+# recursive-lock crash. See src/icon_style.rs.
+
+# Used only by the examples' self-terminate timer, which takes a block. Declared
+# here rather than as a library dependency because the library does not use it;
+# `objc2-foundation` pulls block2 in transitively regardless.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+block2 = "0.6"
+
+# Manifest-level, so it holds for every cargo invocation rather than only those
+# that inherit RUSTFLAGS from the devenv shell. Unused code is a build failure.
+[lints.rust]
+# `priority = -1` because this is a lint GROUP: without it Cargo gives the group
+# and the individual lints below the same priority, the order in this table is
+# ignored, and clippy rejects the ambiguity outright.
+unused = { level = "deny", priority = -1 }
+# This crate is a wall of Objective-C FFI. Every `unsafe` operation states its
+# own justification rather than inheriting one from an `unsafe fn` signature.
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+# Examples, not [[bin]]s: they exercise the library and are the reference for
+# visual checks, but nobody should `cargo install` them. `cargo test` compiles
+# both, so neither can silently rot. They share `examples/common/` and differ
+# only in which `GlassWindow` constructor they call.
+[[example]]
+name = "glasswin"
+required-features = ["window", "glass", "icon-style"]
+
+[[example]]
+name = "glassterm"
+required-features = ["window", "glass", "icon-style"]
+# `cargo test` BUILDS examples but does not RUN their tests unless the target
+# opts in. Without this the knob tests below compile, pass locally under
+# `cargo test --example glassterm`, and are silently absent from `dev-ci` and CI
+# — green, covering nothing.
+test = true

@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Build, bundle and launch tasks for macos-liquid-glass. Not published."
+license = "MIT"
+
+# Deliberately dependency-free. This is the tool that decides whether a
+# measurement is allowed to happen; it should not be able to fail to build
+# because of someone else's crate.
+[dependencies]
+
+[lints.rust]
+unused = { level = "deny", priority = -1 }

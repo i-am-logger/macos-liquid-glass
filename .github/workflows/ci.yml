@@ -1,0 +1,231 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # master is exempt: it is the only ref that publishes, and release-plz
+  # publishes, tags and creates a GitHub release as separate steps. A cancel
+  # between them cannot be undone, so master runs queue instead.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+# `devenv-checks` runs `devenv test`, the same command a developer runs locally,
+# so the workflow is a thin wrapper over the tasks."test:*" set in devenv.nix.
+# Add a check by adding a task, never by adding a step here.
+#
+# release-plz-pr runs after release-plz-release: it computes the next bump from
+# the newest tag, which the release job creates.
+jobs:
+  devenv-checks:
+    name: Lint/UT
+    # macOS, not ubuntu: on Linux the library is EMPTY rather than broken —
+    # every item is cfg(target_os = "macos") — so a green ubuntu run would build
+    # nothing and prove nothing. (--all-targets fails there too: the example is
+    # not cfg-gated.)
+    runs-on: macos-latest
+    # Cold, this builds the whole dev shell. 30 is not enough for that.
+    timeout-minutes: 45
+    env:
+      # CI never opens a debugger, and debuginfo is most of the codegen time and
+      # most of target/ - which is also most of what rust-cache uploads and
+      # downloads every run. Set here rather than in Cargo.toml so a local build
+      # keeps its debugger.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          extra-conf: |
+            extra-substituters = https://nix-community.cachix.org https://cache.nixos.org https://devenv.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
+
+      # The nix store: devenv, the rust toolchain, and every build input.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'devenv.lock') }}
+          # No lock hash in the prefix, so a lockfile bump still restores the
+          # previous store and builds only the delta.
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          # Restore everywhere, save only on master. GitHub caches are
+          # ref-scoped: a PR reads master's entry but writes its own, so an
+          # ungated save spends ~2GB of the 10GB repo budget per open PR and
+          # evicts the cargo caches.
+          save: ${{ github.ref == 'refs/heads/master' }}
+          purge: ${{ github.ref == 'refs/heads/master' }}
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          # A safety valve, not a routine step. Below the working set this runs
+          # GC on every save, and GC roots protect most of the store, so it
+          # sheds little and rebuilds it next run. The `-linux` variant is inert
+          # on a macOS runner; `gc-max-store-size` is the portable spelling.
+          gc-max-store-size: 8G
+
+      - name: Install devenv
+        run: nix profile install nixpkgs#devenv
+
+      # In its own step so a shell build failure reads as one, and so the
+      # toolchain probes below are instant.
+      - name: Build the dev shell
+        run: devenv shell true
+
+      # ~/.cargo and ./target.
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # cmd-format runs rust-cache's `rustc -vV` and `cargo metadata` probes
+          # through devenv, so the key tracks the toolchain that actually
+          # compiles rather than the runner image's rustup. It needs devenv, so
+          # this step has to stay after the install above.
+          cmd-format: "devenv shell -- {0}"
+          # `key:` is ignored whenever `shared-key:` is set, so the lockfile
+          # hash has to live here.
+          shared-key: devenv-${{ hashFiles('devenv.lock') }}
+          workspaces: ". -> target"
+
+      - name: Run format & lint checks
+        run: devenv test
+
+  # The one check that is NOT a devenv task: the shell pins a single toolchain
+  # and ships no rustup, so it cannot compile against a second compiler. The
+  # version is read from Cargo.toml rather than duplicated here, so the job
+  # tests the MSRV that is actually declared.
+  msrv:
+    name: MSRV
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - id: rv
+        run: |
+          v=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test -n "$v" || { echo "no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "declared MSRV: $v"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv-${{ steps.rv.outputs.version }}
+      # --all-targets so the examples are covered too; they are part of what a
+      # consumer compiles when they `cargo test` this crate.
+      - run: cargo check --all-features --all-targets
+
+  coverage:
+    name: Coverage
+    # Same reason as devenv-checks: the code under test is macOS-only.
+    runs-on: macos-latest
+    needs: [devenv-checks]
+    timeout-minutes: 30
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+
+  # Publishes to crates.io, tags, and creates the GitHub release when a Release
+  # PR has been merged. `release_always = false` in release-plz.toml means this
+  # is a no-op on an ordinary feature merge — merging the Release PR is the act
+  # that authorises a publish.
+  release-plz-release:
+    name: Release
+    # macOS, because release-plz.toml sets `semver_check = true`. On Linux this
+    # crate's public API is EMPTY — every item is behind cfg(target_os = "macos")
+    # — so cargo-semver-checks would compare nothing against nothing and wave a
+    # breaking change straight through.
+    runs-on: macos-latest
+    needs: [devenv-checks, msrv]
+    timeout-minutes: 30
+    # `!cancelled()`, not `always()`: this job publishes to an IMMUTABLE
+    # registry, so running it from a cancelled workflow is the one thing that
+    # cannot be undone. Both gates must have SUCCEEDED on the exact tree being
+    # published — a gate that accepts `skipped` is decorative.
+    if: |
+      !cancelled() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.devenv-checks.result == 'success' &&
+      needs.msrv.result == 'success'
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release-plz diffs against the previous tag, so it needs full history.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5.131
+        id: release-plz
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Opens/updates the Release PR that bumps the version and writes CHANGELOG.md.
+  # MUST run after release-plz-release — see the anti-loop note at the top.
+  release-plz-pr:
+    name: Release-PR
+    # Same reason as the Release job: the API it reasons about only exists on
+    # macOS.
+    runs-on: macos-latest
+    needs: [devenv-checks, release-plz-release]
+    timeout-minutes: 20
+    # Requires Release to have SUCCEEDED: a failed publish leaves no new tag,
+    # which would re-trigger the same redundant-PR loop. On an ordinary feature
+    # merge Release succeeds as a no-op, so this never blocks the first PR.
+    if: |
+      !cancelled() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.devenv-checks.result == 'success' &&
+      needs.release-plz-release.result == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5.131
+        id: release-plz
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

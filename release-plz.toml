@@ -1,0 +1,57 @@
+# Release configuration. The workflow restricts releasing to master; this file
+# decides what gets released once there.
+#
+# https://release-plz.dev/docs/config
+
+[workspace]
+# cargo-semver-checks before each release: a "patch" bump on a breaking API
+# change is rejected and the version escalated to satisfy semver.
+semver_check = true
+
+# Single-crate template, so a plain `vX.Y.Z` tag. A workspace instantiated from
+# this template should switch to "{{ package }}-v{{ version }}" so each member
+# gets its own tag.
+git_tag_name = "v{{ version }}"
+
+git_release_enable = true
+
+# "auto" marks a version carrying a pre-release suffix as a GitHub pre-release,
+# so a beta does not present itself as the latest stable download.
+git_release_type = "auto"
+
+# Publishing requires merging a Release PR. An ordinary commit landing on master
+# does not publish, however it got there. crates.io is immutable, so the second
+# merge is the point.
+release_always = false
+
+# A release is triggered by changes to packaged files. README.md, LICENSE,
+# README.md, LICENSE and src/ ship inside the crate, so editing any of them needs a
+# new version before crates.io shows it.
+#
+# .github/, devenv.*, nix/, run.sh and statix.toml are NOT packaged — but only
+# because Cargo.toml carries an explicit `exclude`. Without it cargo ships
+# everything not gitignored, and this note was false for exactly that reason.
+#
+# Check what ships with `cargo package --list`.
+
+# Filterable in the GitHub UI as `is:pr label:release`, and excludable from
+# "needs human review" queries with `-label:automated`.
+pr_labels = ["release", "automated"]
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+
+# Release commits are not changes. Parsed in, each one back-fills a changelog
+# entry and opens another release PR, which produces another release commit.
+#
+# The optional-scope group catches both forms release-plz emits: the unscoped
+# aggregate `chore: release` and the per-package `chore(<package>): release v<x>`.
+commit_parsers = [
+  { message = "^chore(\\(.+\\))?: release", skip = true },
+]

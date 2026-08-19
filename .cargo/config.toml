@@ -1,0 +1,7 @@
+# `cargo xtask <task>` — build/bundle/launch tasks, written in Rust rather than
+# shell. See xtask/src/main.rs.
+#
+# This file is NOT packaged (Cargo.toml excludes it), so it affects only this
+# working copy and never a consumer of the published crate.
+[alias]
+xtask = "run --release --package xtask --"
