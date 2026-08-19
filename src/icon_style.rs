@@ -41,13 +41,19 @@ use objc2_foundation::{
 /// The preference key the Appearance pane writes.
 pub const ICON_APPEARANCE_KEY: &str = "AppleIconAppearanceTheme";
 
-/// The style family. The Settings pane shows four options; these are the
-/// families they map onto.
+/// How a style renders, which is coarser than which button the user pressed.
 ///
-/// Measured on macOS 27.0 (26A5388g): for a *desktop widget*, Default and Clear
-/// render identically (MAE 0), as do RegularDark and ClearDark. So the family
-/// only has to distinguish "untinted" from "tinted"; the light/dark half comes
-/// from [`ThemeMode`].
+/// This is a **lossy** grouping, deliberately: for a desktop widget, Default and
+/// Clear render identically (MAE 0), as do Dark and Clear ▸ Dark, so the family
+/// only has to separate untinted from tinted. The light/dark half is on
+/// [`ThemeMode`].
+///
+/// Because it is lossy, [`Regular`] covers two different Settings selections —
+/// Default and the Dark style with its Auto sub-option — which render the same
+/// but are not the same choice. If you need to know exactly which of the nine
+/// the user picked, match on [`WidgetStyle::token`], not on this.
+///
+/// [`Regular`]: IconStyle::Regular
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum IconStyle {
