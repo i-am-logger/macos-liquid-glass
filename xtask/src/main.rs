@@ -1,4 +1,4 @@
-//! Build, bundle and launch `glassterm`.
+//! Build, bundle and launch the `borderless` example as a real `.app`.
 //!
 //! This replaces the `run.sh` the project carried over from its Swift life. It
 //! is not a convenience wrapper: it is the thing that decides whether a
@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::SystemTime;
 
-const EXAMPLE: &str = "glassterm";
-const BUNDLE_ID: &str = "com.logger.glassterm";
+const EXAMPLE: &str = "borderless";
+const BUNDLE_ID: &str = "com.logger.macosliquidglass.borderless";
 /// The binary is stamped for macOS 27 and LaunchServices refuses a bundle whose
 /// declared floor it cannot honour. Note this is the *app's* floor, not the
 /// library's — `macos-liquid-glass` itself needs only macOS 26 at runtime.
@@ -212,7 +212,9 @@ fn launch(app: &Path, tag: &str) -> Result<(), String> {
 
     // /tmp explicitly, NOT std::env::temp_dir(). On macOS that returns the
     // per-user $TMPDIR (/var/folders/...), and the out-of-tree measurement
-    // harness reads /tmp/glassterm_<tag>.log. run.sh used /tmp; moving it broke
+    // harness reads /tmp/<example>_<tag>.log. Kept in /tmp rather than $TMPDIR,
+    // which is per-user and per-session and so is not a stable path for a
+    // capture harness running outside the app. Previously
     // every script that consumes the per-run record.
     let log = PathBuf::from("/tmp").join(format!("{EXAMPLE}_{tag}.log"));
     let _ = fs::write(&log, b"");

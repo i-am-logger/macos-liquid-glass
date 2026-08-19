@@ -119,14 +119,14 @@ missing_docs = "warn"
 # both, so neither can silently rot. They share `examples/common/` and differ
 # only in which `GlassWindow` constructor they call.
 [[example]]
-name = "glasswin"
+name = "titled"
 required-features = ["window", "glass", "icon-style"]
 
 [[example]]
-name = "glassterm"
+name = "borderless"
 required-features = ["window", "glass", "icon-style"]
 # `cargo test` BUILDS examples but does not RUN their tests unless the target
 # opts in. Without this the knob tests below compile, pass locally under
-# `cargo test --example glassterm`, and are silently absent from `dev-ci` and CI
+# `cargo test --example borderless`, and are silently absent from `dev-ci` and CI
 # — green, covering nothing.
 test = true

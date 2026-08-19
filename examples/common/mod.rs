@@ -1,6 +1,6 @@
 //! Content shared by both examples.
 //!
-//! `glassterm` and `glasswin` draw exactly the same surface and differ ONLY in
+//! `titled` and `borderless` draw exactly the same surface and differ ONLY in
 //! the window they put it in — borderless versus a normal titled window. Keeping
 //! the content here is what makes that comparison honest: any visual difference
 //! between the two examples is attributable to the chrome, because there is one
@@ -441,8 +441,7 @@ impl TerminalContentView {
             .title
             .setTextColor(Some(&primary.colorWithAlphaComponent(0.85)));
         ivars.title.setStringValue(&NSString::from_str(&format!(
-            "{} · {} — {}",
-            ivars.identity.name,
+            "macos-liquid-glass · {} — {}",
             ivars.identity.chrome_name(),
             style
         )));
@@ -450,9 +449,8 @@ impl TerminalContentView {
         for (i, f) in ivars.rows.borrow().iter().enumerate() {
             match SCRIPT.get(i) {
                 Some((text, is_prompt)) => {
-                    // {NAME} is substituted so each example's transcript names
-                    // itself rather than always claiming to be glassterm.
-                    let text = text.replace("{NAME}", ivars.identity.name);
+                    // Each example's transcript names itself.
+                    let text = text.replace("{NAME}", ivars.identity.chrome_name());
                     f.setStringValue(&NSString::from_str(&text));
                     f.setTextColor(Some(if *is_prompt { &primary } else { &dim }));
                 }
@@ -471,15 +469,14 @@ impl TerminalContentView {
 /// The two differ ONLY in this: same surface, same knobs, same drawing code.
 #[derive(Clone, Copy)]
 pub struct Identity {
-    /// The example's own name, shown in the title band.
-    pub name: &'static str,
     /// Build a borderless window rather than a normal titled one.
     pub borderless: bool,
 }
 
 impl Identity {
-    /// "borderless" or "titled" — shown in the band so a screenshot says which
-    /// of the two it is without needing the window frame for context.
+    /// `"borderless"` or `"titled"` — also the example's own name, shown in the
+    /// band so a screenshot says which of the two it is without needing the
+    /// window frame for context.
     pub fn chrome_name(self) -> &'static str {
         if self.borderless {
             "borderless"
@@ -520,9 +517,9 @@ define_class!(
                 .get()
                 .expect("identity set before launch");
             let window = if id.borderless {
-                GlassWindow::borderless(mtm, SIZE, id.name)
+                GlassWindow::borderless(mtm, SIZE, id.chrome_name())
             } else {
-                GlassWindow::new(mtm, SIZE, id.name)
+                GlassWindow::new(mtm, SIZE, id.chrome_name())
             };
             let frame = NSRect::new(NSPoint::new(0.0, 0.0), SIZE);
 
@@ -628,9 +625,8 @@ fn apply(
     // was — exactly the "inert knob" defect R19 records in the Swift, where the
     // harness's only per-run record named knobs that reached no drawing code.
     eprintln!(
-        "[{}] chrome={} paperD={} paperL={} tint={} tbody={} gt={} hue={} hsat={} \
+        "[{}] paperD={} paperL={} tint={} tbody={} gt={} hue={} hsat={} \
          poll={:?} glass={} shadow={} {} tinted={} dark={}",
-        content.identity().name,
         content.identity().chrome_name(),
         paper_dark(),
         paper_light(),
@@ -796,7 +792,7 @@ fn origin_from_env() -> Option<NSPoint> {
     let x: f64 = x.trim().parse().ok()?;
     let y: f64 = y.trim().parse().ok()?;
     if !finite_coordinate(x) || !finite_coordinate(y) {
-        eprintln!("[glassterm] GN_ORIGIN={raw:?} is out of range; centring instead");
+        eprintln!("GN_ORIGIN={raw:?} is out of range; centring instead");
         return None;
     }
     Some(NSPoint::new(x, y))
@@ -831,7 +827,7 @@ fn install_menu(app: &NSApplication, mtm: MainThreadMarker, id: Identity) {
     let quit = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
-            &NSString::from_str(&format!("Quit {}", id.name)),
+            &NSString::from_str(&format!("Quit {}", id.chrome_name())),
             Some(sel!(terminate:)),
             &NSString::from_str("q"),
         )

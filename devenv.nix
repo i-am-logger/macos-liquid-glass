@@ -60,7 +60,8 @@ in
     echo "=== ALL PASSED ==="
   '';
 
-  # The library has nothing to run; `glassterm` is the reference app. The xtask
+  # The library has nothing to run; the `borderless` example is the reference
+  # app. The xtask
   # does the part `cargo run` cannot: an unbundled, background-launched process
   # cannot activate on macOS 14+, so its window is never key, and the material
   # renders differently when the window is not key.

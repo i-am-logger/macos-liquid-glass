@@ -1,16 +1,6 @@
 <div align="center">
 
-# macos-liquid-glass
-
-**Liquid Glass windows on macOS** — that follow
-**System Settings ▸ Appearance ▸ Icon & widget style**.
-
-The setting that restyles desktop widgets, tracked live.
-
-![Two windows over a desktop: a titled one with traffic lights, and a borderless one with none](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/macos-liquid-glass.jpg)
-
 [![crates.io](https://img.shields.io/crates/v/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
-[![Downloads](https://img.shields.io/crates/d/macos-liquid-glass?logo=rust&logoColor=white)](https://crates.io/crates/macos-liquid-glass)
 [![MSRV](https://img.shields.io/crates/msrv/macos-liquid-glass?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![CI](https://img.shields.io/github/actions/workflow/status/i-am-logger/macos-liquid-glass/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/i-am-logger/macos-liquid-glass/actions/workflows/ci.yml)
 [![docs.rs](https://img.shields.io/docsrs/macos-liquid-glass?logo=docsdotrs&logoColor=white)](https://docs.rs/macos-liquid-glass)
@@ -19,6 +9,15 @@ The setting that restyles desktop widgets, tracked live.
 [![devenv](https://img.shields.io/badge/devenv-2b2b2b?logo=nixos&logoColor=white)](https://devenv.sh)
 [![macOS](https://img.shields.io/badge/macOS%2026%2B-2b2b2b?logo=apple&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/MIT-2b2b2b?logo=opensourceinitiative&logoColor=white)](LICENSE)
+
+# macos-liquid-glass
+
+**Liquid Glass windows on macOS** — that follow
+**System Settings ▸ Appearance ▸ Icon & widget style**.
+
+The setting that restyles desktop widgets, tracked live.
+
+![Two windows over a desktop: a titled one with traffic lights, and a borderless one with none](https://raw.githubusercontent.com/i-am-logger/macos-liquid-glass/master/docs/macos-liquid-glass.jpg)
 
 </div>
 
@@ -111,10 +110,10 @@ behaviours live in `NSThemeFrame`. Measured on macOS 27.0 (26A5406e):
 
 Neither example fakes the missing chrome. Hand-adding detached standard buttons
 to a borderless window is possible and they even look right, but the minimise
-one is inert — so `glassterm` shows no buttons at all rather than a cluster
+one is inert — so the borderless window shows no buttons at all rather than a cluster
 where one third does nothing.
 
-`examples/glasswin.rs` is the normal window; `examples/glassterm.rs` is the
+`examples/titled.rs` is the normal window; `examples/borderless.rs` is the
 borderless one, and is the surface every measurement in `MEASUREMENTS.md`
 was taken against.
 
@@ -186,8 +185,8 @@ Two runnable examples share one content module and differ only in which
 constructor they call:
 
 ```sh
-cargo run --example glasswin     # GlassWindow::new        — titled
-cargo run --example glassterm    # GlassWindow::borderless — no chrome
+cargo run --example titled       # GlassWindow::new
+cargo run --example borderless   # GlassWindow::borderless
 ```
 
 Both render a mock terminal on glass and print the style they resolved. They
