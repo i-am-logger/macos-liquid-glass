@@ -355,12 +355,30 @@ The write lands promptly; CFPrefs sits on the cross-process notification for
 ~3.3 s, coalescing foreign global-domain changes.
 
 So the shipped design is a hybrid: KVO plus a forced-sync reconcile pass at
-`GN_POLL`, default 0.75 s, giving 0.03–0.04 s response. Do not simplify it to one
-half or the other. With the reconcile pass disabled entirely, pure KVO measured
-**slower still — 13 s against 3.9 s** — so the forced sync is helping rather than
-contending for the CFPrefs lock. And KVO earns its place by catching changes the
-timer would otherwise wait on. The forced sync measures 0.0% CPU in both this
-process and cfprefsd even at 3 syncs/second.
+`GN_POLL`, default 0.75 s. Do not simplify it to one half or the other.
+
+End-to-end delivery with the default, timing from the `defaults write` to the
+observer's callback, five changes:
+
+| | ms |
+|---|---|
+| fastest | 138 |
+| median | 335 |
+| slowest | 671 |
+
+A uniform spread across the 750 ms interval, which is what a poll of that period
+predicts — the sync, not KVO, is what delivers.
+
+**`Reconcile::KvoOnly` did not deliver at all** in the same test: two changes,
+40 s apart, produced no callback beyond the priming one at construction. Without
+the forced sync this process never re-reads the global domain, so a foreign
+write goes unnoticed. Note the caveat that applies to any `defaults write`
+result here — it is not the path a user takes, and a change driven through the
+Settings UI may reach KVO by a route this test does not exercise. Either way the
+hybrid is what is shipped, and it is what these figures describe.
+
+The forced sync measures 0.0% CPU in both this process and cfprefsd even at
+3 syncs/second.
 
 `NSWorkspace.currentIconAppearanceConfiguration` is correct eventually but its
 cached value lags: it still reported Clear ▸ Dark a full 2 s after the system had

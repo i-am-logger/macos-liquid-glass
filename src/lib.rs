@@ -64,7 +64,7 @@
     doc = "```ignore"
 )]
 //! use macos_liquid_glass::glass::{GlassStyle, GlassSurface};
-//! use macos_liquid_glass::icon_style::{Reconcile, StyleObserver};
+//! use macos_liquid_glass::icon_style::Reconcile;
 //! use macos_liquid_glass::window::GlassWindow;
 //! use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 //!
@@ -77,27 +77,33 @@
 //! let glass = GlassSurface::new(mtm, frame, GlassStyle::Clear, 16.0)?;
 //! window.set_content_view(glass.view());
 //!
-//! // `Clone` retains rather than copies — both handles address the one window.
-//! // The closure outlives this scope, so it needs its own.
-//! let win = window.clone();
-//! let _observer = StyleObserver::new(mtm, Reconcile::default(), move |style| {
-//!     // FORCING the appearance, which is right for a surface that follows the
-//!     // widget style — it carries its own light/dark, so under "Clear ▸ Dark"
-//!     // it stays dark while the system is Light. An ordinary window that
-//!     // should merely follow the system wants `None` here instead.
-//!     win.set_appearance(style.appearance().as_deref());
-//! });
+//! // Track the Icon & widget style for as long as the window lives. The
+//! // window owns the tracker, so there is nothing to keep hold of.
+//! window.follow_icon_style(Reconcile::default());
 //!
 //! window.show();
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! Keep the `StyleObserver` alive for as long as the window: KVO does not
-//! retain its observer, and dropping it is what unregisters.
+//! # Driving your own drawing from the style
+//!
+//! [`window::GlassWindow::follow_icon_style`] sets the window's *appearance* and
+//! nothing else. To colour your own content from the style — a theme tint, a
+//! dimming layer, per-token drawing — observe it directly and keep the observer
+//! alive for as long as you want changes, because dropping it is what
+//! unregisters:
+//!
+//! ```ignore
+//! let _observer = StyleObserver::new(mtm, Reconcile::default(), move |style| {
+//!     match style.token() { /* all nine are distinguishable here */ }
+//!     let tint = style.tint();
+//! });
+//! ```
 //!
 //! `icon-style` carries no dependency on `window`, so a consumer that already
-//! has an `NSWindow` can take the tracker by itself:
+//! has an `NSWindow` takes the tracker by itself and applies the style however
+//! it draws:
 //!
 //! ```toml
 //! macos-liquid-glass = { version = "1.0.0-beta.1", default-features = false, features = ["icon-style"] }

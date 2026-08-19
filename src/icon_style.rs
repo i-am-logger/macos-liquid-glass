@@ -704,15 +704,30 @@ impl Observer {
 
 /// How hard to work at noticing a change.
 ///
-/// KVO alone is correct but slow; the forced-sync pass is what makes the
-/// response prompt. Named rather than an `Option<Duration>` because with an
-/// `Option` there is no way to spell "the recommended setting" — `None` means
-/// *off* — so every caller ends up hardcoding the same magic number.
+/// How hard to work at noticing a change.
+///
+/// The forced-sync pass is what makes the response prompt. With the default,
+/// a change is delivered in **138–671 ms (median 335)** over five measured
+/// changes — a uniform spread across the 750 ms interval, which is what a poll
+/// of that period predicts.
+///
+/// Named rather than an `Option<Duration>` because with an `Option` there is no
+/// way to spell "the recommended setting" — `None` means *off* — so every
+/// caller ends up hardcoding the same magic number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Reconcile {
-    /// KVO only. CFPrefs coalesces cross-process global-domain notifications by
-    /// roughly 3s, so a change can take several seconds to arrive.
+    /// KVO only, with no forced sync.
+    ///
+    /// **Not recommended, and may never deliver.** Without the forced sync this
+    /// process does not re-read the global domain, so a change written by
+    /// another process can go unnoticed: measured against `defaults write`,
+    /// two changes over 80 s produced no callback at all. CFPrefs also
+    /// coalesces cross-process global-domain notifications by roughly 3 s, so
+    /// even when KVO does fire it is seconds behind.
+    ///
+    /// Use it only when something else in your process already forces a
+    /// preference sync.
     KvoOnly,
     /// Also force a CFPreferences sync on this interval.
     ///
@@ -730,8 +745,15 @@ impl Default for Reconcile {
 
 /// Watches the Icon & widget style and invokes a callback when it changes.
 ///
+/// Use this when you draw from the style — a theme tint, a dimming layer,
+/// anything that branches on [`WidgetStyle::token`]. If all you need is for a
+/// [`GlassWindow`] to match the system light/dark, `GlassWindow::follow_icon_style`
+/// does that and owns the observer for you, so there is nothing to hold.
+///
 /// The callback fires once immediately on construction with the current style,
 /// so a caller does not have to separately prime itself.
+///
+/// [`GlassWindow`]: crate::window::GlassWindow
 ///
 /// Dropping this removes the KVO registrations and invalidates the timer.
 /// **Something must hold it** — a `StyleObserver` that is not bound to a
@@ -756,8 +778,9 @@ impl StyleObserver {
     /// and [`Reconcile::KvoOnly`] switches the pass off. An interval shorter
     /// than 50 ms is raised to 50 ms — see the clamp in the body for why.
     ///
-    /// With [`Reconcile::KvoOnly`], delivery relies on KVO alone and takes
-    /// several seconds.
+    /// With the default, a change is delivered in 138–671 ms (median 335 over
+    /// five measured changes). With [`Reconcile::KvoOnly`] it may not be
+    /// delivered at all — see that variant.
     ///
     /// `on_change` is [`Fn`], not [`FnMut`], and that is deliberate. The
     /// callback can re-enter this object — `performSelectorOnMainThread:`
