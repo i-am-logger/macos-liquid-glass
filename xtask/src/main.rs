@@ -51,7 +51,6 @@ const KNOBS: &[&str] = &[
     "GN_HUE",
     "GN_HSAT",
     "GN_TBODY",
-    "GN_POLL",
 ];
 
 fn main() -> ExitCode {

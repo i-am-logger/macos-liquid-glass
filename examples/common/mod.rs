@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 use block2::RcBlock;
 
 use macos_liquid_glass::glass::{GlassStyle, GlassSurface};
-use macos_liquid_glass::icon_style::{Reconcile, StyleObserver, WidgetStyle};
+use macos_liquid_glass::icon_style::{StyleObserver, WidgetStyle};
 use macos_liquid_glass::window::GlassWindow;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -507,7 +507,7 @@ define_class!(
             let win_for_cb = window.clone();
             let glass_for_cb = glass.clone();
             let content_for_cb = content.clone();
-            let observer = StyleObserver::new(mtm, reconcile(), move |style| {
+            let observer = StyleObserver::new(mtm, move |style| {
                 apply(&win_for_cb, &glass_for_cb, &content_for_cb, style);
             });
 
@@ -577,7 +577,7 @@ fn apply(
     // code.
     eprintln!(
         "[{}] paperD={} paperL={} tint={} tbody={} gt={} hue={} hsat={} \
-         poll={:?} glass={} shadow={} {} tinted={} dark={}",
+         glass={} shadow={} {} tinted={} dark={}",
         content.identity().chrome_name(),
         paper_dark(),
         paper_light(),
@@ -586,32 +586,12 @@ fn apply(
         gt_applied,
         env_f64("GN_HUE", 0.60),
         env_f64("GN_HSAT", 0.80),
-        reconcile(),
         glass_style_name(),
         want_shadow(is_dark),
         style,
         style.is_tinted(),
         is_dark,
     );
-}
-
-/// `GN_POLL` — seconds between forced-sync reconcile passes. `0` disables the
-/// pass entirely and relies on KVO alone.
-///
-/// `0` must be checked before the clamp: clamping unconditionally to the 0.05s
-/// floor would make `GN_POLL=0` mean 20 syncs a second, the opposite of what it
-/// says.
-fn reconcile() -> Reconcile {
-    let v = env_f64("GN_POLL", 0.75);
-    if v <= 0.0 {
-        return Reconcile::KvoOnly;
-    }
-    // `try_from_secs_f64`, not `from_secs_f64`: the panicking constructor
-    // rejects +inf and anything at or above u64::MAX seconds, and this runs
-    // inside `applicationDidFinishLaunching:`, where a panic unwinds into
-    // Objective-C and aborts the process instead of reporting a bad knob. A
-    // value `Duration` cannot represent means what `GN_POLL=0` means.
-    std::time::Duration::try_from_secs_f64(v.max(0.05)).map_or(Reconcile::KvoOnly, Reconcile::Every)
 }
 
 /// The material darkening, applied to the MATERIAL via `tintColor` rather than

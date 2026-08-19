@@ -702,58 +702,26 @@ impl Observer {
     }
 }
 
-/// How hard to work at noticing a change.
+/// How often the forced-sync pass runs.
 ///
-/// How hard to work at noticing a change.
+/// Private, and not a knob. The pass is what actually delivers a change — KVO
+/// alone was measured delivering nothing at all for a write from another
+/// process — so switching it off is not a useful option, and tuning it buys
+/// nothing: at this interval the cost is below the resolution of a 30-second
+/// CPU sample, for this process and for cfprefsd.
 ///
-/// The forced-sync pass is what makes the response prompt. With the default,
-/// a change is delivered in **138–671 ms (median 335)** over five measured
-/// changes — a uniform spread across the 750 ms interval, which is what a poll
-/// of that period predicts.
-///
-/// Named rather than an `Option<Duration>` because with an `Option` there is no
-/// way to spell "the recommended setting" — `None` means *off* — so every
-/// caller ends up hardcoding the same magic number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Reconcile {
-    /// KVO only, with no forced sync.
-    ///
-    /// **Not recommended, and may never deliver.** Without the forced sync this
-    /// process does not re-read the global domain, so a change written by
-    /// another process can go unnoticed: measured against `defaults write`,
-    /// two changes over 80 s produced no callback at all. CFPrefs also
-    /// coalesces cross-process global-domain notifications by roughly 3 s, so
-    /// even when KVO does fire it is seconds behind.
-    ///
-    /// Use it only when something else in your process already forces a
-    /// preference sync.
-    KvoOnly,
-    /// Also force a CFPreferences sync on this interval.
-    ///
-    /// Clamped to a 50 ms floor — see [`StyleObserver::new`].
-    Every(Duration),
-}
-
-impl Default for Reconcile {
-    /// `Every(750ms)`, the interval the reference app uses; with it, a
-    /// preference change was measured reaching this crate within 1s.
-    fn default() -> Self {
-        Self::Every(Duration::from_millis(750))
-    }
-}
+/// At 50 ms a change is delivered in 0–50 ms, median ~25 ms.
+const RECONCILE_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Watches the Icon & widget style and invokes a callback when it changes.
 ///
 /// Use this when you draw from the style — a theme tint, a dimming layer,
 /// anything that branches on [`WidgetStyle::token`]. If all you need is for a
-/// [`GlassWindow`] to match the system light/dark, `GlassWindow::follow_icon_style`
-/// does that and owns the observer for you, so there is nothing to hold.
+/// window to match the system light/dark, `GlassWindow::follow_icon_style` does
+/// that and owns the observer for you, so there is nothing to hold.
 ///
 /// The callback fires once immediately on construction with the current style,
 /// so a caller does not have to separately prime itself.
-///
-/// [`GlassWindow`]: crate::window::GlassWindow
 ///
 /// Dropping this removes the KVO registrations and invalidates the timer.
 /// **Something must hold it** — a `StyleObserver` that is not bound to a
@@ -773,14 +741,10 @@ pub struct StyleObserver {
 impl StyleObserver {
     /// Register for changes.
     ///
-    /// `reconcile` selects the forced-sync backstop;
-    /// [`Reconcile::default()`][Reconcile::default] is the recommended setting
-    /// and [`Reconcile::KvoOnly`] switches the pass off. An interval shorter
-    /// than 50 ms is raised to 50 ms — see the clamp in the body for why.
-    ///
-    /// With the default, a change is delivered in 138–671 ms (median 335 over
-    /// five measured changes). With [`Reconcile::KvoOnly`] it may not be
-    /// delivered at all — see that variant.
+    /// A change is delivered in 0–50 ms, median ~25 ms. How that is achieved —
+    /// KVO plus a forced preference sync — is this crate's business and not a
+    /// parameter: KVO alone was measured delivering nothing at all for a write
+    /// from another process, so there is no useful choice to expose.
     ///
     /// `on_change` is [`Fn`], not [`FnMut`], and that is deliberate. The
     /// callback can re-enter this object — `performSelectorOnMainThread:`
@@ -792,8 +756,8 @@ impl StyleObserver {
     /// consumer, whose use case determines which is sound.
     ///
     /// The pass is scheduled in `NSDefaultRunLoopMode` (NSTimer.h), so it does
-    /// not tick during a live resize drag or while a menu is tracking, and
-    /// latency falls back to KVO's for the duration. The KVO hop itself
+    /// not tick during a live resize drag or while a menu is tracking, and a
+    /// change made during one arrives when tracking ends. The KVO hop itself
     /// survives tracking, because `performSelectorOnMainThread:` uses common
     /// modes (NSThread.h).
     ///
@@ -807,11 +771,7 @@ impl StyleObserver {
     /// `reconcile` records the style as applied *before* calling out, so
     /// swallowing the panic would leave the observer permanently claiming a
     /// style it never applied.
-    pub fn new(
-        mtm: MainThreadMarker,
-        reconcile: Reconcile,
-        on_change: impl Fn(&WidgetStyle) + 'static,
-    ) -> Self {
+    pub fn new(mtm: MainThreadMarker, on_change: impl Fn(&WidgetStyle) + 'static) -> Self {
         // Read ONCE. `applied` is seeded from this and the priming call-out
         // below reuses it, rather than seeding here and letting `reconcile`
         // read again — that cost two `CFPreferencesAppSynchronize` calls plus
@@ -848,13 +808,8 @@ impl StyleObserver {
         // against 0.0% at the 0.75s default. The reference app applies the
         // same 50 ms floor, but a consumer using `icon-style` directly does
         // not go through it.
-        const FLOOR: Duration = Duration::from_millis(50);
-        let interval = match reconcile {
-            Reconcile::KvoOnly => None,
-            Reconcile::Every(d) => Some(d.max(FLOOR)),
-        };
-
-        if let Some(interval) = interval {
+        {
+            let interval = RECONCILE_INTERVAL;
             // SAFETY: `reconcileTick:` is defined on Observer and takes the
             // timer as its single argument.
             let timer = unsafe {
@@ -1165,15 +1120,5 @@ mod tests {
         // Forced modes do not.
         assert!(!style(4).is_dark(&dark), "Clear ▸ Light stays light");
         assert!(style(5).is_dark(&light), "Clear ▸ Dark stays dark");
-    }
-
-    /// The default is the interval the reference app uses, and the docs quote
-    /// it in prose; a drift between the two would silently mislead.
-    #[test]
-    fn the_default_reconcile_is_the_measured_interval() {
-        assert_eq!(
-            Reconcile::default(),
-            Reconcile::Every(Duration::from_millis(750))
-        );
     }
 }

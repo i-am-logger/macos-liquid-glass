@@ -64,7 +64,6 @@
     doc = "```ignore"
 )]
 //! use macos_liquid_glass::glass::{GlassStyle, GlassSurface};
-//! use macos_liquid_glass::icon_style::Reconcile;
 //! use macos_liquid_glass::window::GlassWindow;
 //! use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 //!
@@ -79,7 +78,7 @@
 //!
 //! // Track the Icon & widget style for as long as the window lives. The
 //! // window owns the tracker, so there is nothing to keep hold of.
-//! window.follow_icon_style(Reconcile::default());
+//! window.follow_icon_style();
 //!
 //! window.show();
 //! # Ok(())
@@ -88,14 +87,14 @@
 //!
 //! # Driving your own drawing from the style
 //!
-//! [`window::GlassWindow::follow_icon_style`] sets the window's *appearance* and
+//! `GlassWindow::follow_icon_style` sets the window's *appearance* and
 //! nothing else. To colour your own content from the style — a theme tint, a
 //! dimming layer, per-token drawing — observe it directly and keep the observer
 //! alive for as long as you want changes, because dropping it is what
 //! unregisters:
 //!
 //! ```ignore
-//! let _observer = StyleObserver::new(mtm, Reconcile::default(), move |style| {
+//! let _observer = StyleObserver::new(mtm, move |style| {
 //!     match style.token() { /* all nine are distinguishable here */ }
 //!     let tint = style.tint();
 //! });

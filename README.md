@@ -58,7 +58,7 @@ MainThreadMarker`, which is a genuinely confusing error to receive.
 
 ```rust
 use macos_liquid_glass::glass::{GlassStyle, GlassSurface};
-use macos_liquid_glass::icon_style::{Reconcile, StyleObserver};
+use macos_liquid_glass::icon_style::StyleObserver;
 use macos_liquid_glass::window::GlassWindow;
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The closure outlives this scope, so it needs its own.
     let win = window.clone();
     // Fires immediately with the current style, then on every change.
-    let _observer = StyleObserver::new(mtm, Reconcile::default(), move |style| {
+    let _observer = StyleObserver::new(mtm, move |style| {
         win.set_appearance(style.appearance().as_deref());
         // style.token(), style.is_tinted(), style.tint(), style.to_string() ...
     });

@@ -551,25 +551,24 @@ impl GlassWindow {
     ///
     /// ```no_run
     /// # #[cfg(all(feature = "window", feature = "icon-style"))] {
-    /// use macos_liquid_glass::icon_style::Reconcile;
     /// use macos_liquid_glass::window::GlassWindow;
     /// use objc2_foundation::{MainThreadMarker, NSSize};
     ///
     /// let mtm = MainThreadMarker::new().expect("main thread");
     /// let window = GlassWindow::new(mtm, NSSize::new(560.0, 360.0), "example");
-    /// window.follow_icon_style(Reconcile::default());
+    /// window.follow_icon_style();
     /// window.show();
     /// # }
     /// ```
     ///
     /// [`StyleObserver`]: crate::icon_style::StyleObserver
-    pub fn follow_icon_style(&self, reconcile: crate::icon_style::Reconcile) {
+    pub fn follow_icon_style(&self) {
         // WEAK, deliberately. The window owns the observer, the observer owns
         // this closure; a strong handle here would close the loop and neither
         // would ever be released — so the window would never deallocate and the
         // KVO registrations would outlive the caller's last reference.
         let weak = objc2::rc::Weak::from_retained(&self.window);
-        let observer = crate::icon_style::StyleObserver::new(self.mtm(), reconcile, move |style| {
+        let observer = crate::icon_style::StyleObserver::new(self.mtm(), move |style| {
             if let Some(window) = weak.load() {
                 window.setAppearance(style.appearance().as_deref());
             }

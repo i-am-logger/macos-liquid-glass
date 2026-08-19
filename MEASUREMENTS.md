@@ -210,7 +210,7 @@ named environment variable, which is how they were swept.
 | `GN_PAPER_L` | 0.12 | extra body dim, Light | fitted against the live widget |
 | `GN_TINT` | 0.20 | theme wash on the band under Tinted | inherited from the reference build; **not measured** |
 | `GN_TBODY` | 0.25 | share of the band's wash the body gets | from the green-theme band/body split above |
-| `GN_POLL` | 0.75 s | forced-sync reconcile interval | see "Following a change" |
+
 
 The body dim is measured as its share of the **band** — which is what the paper
 composites over — not of the wallpaper. Comparing the body to the wallpaper
@@ -354,28 +354,29 @@ forced-sync reader against the app from the same AX press:
 The write lands promptly; CFPrefs sits on the cross-process notification for
 ~3.3 s, coalescing foreign global-domain changes.
 
-So the shipped design is a hybrid: KVO plus a forced-sync reconcile pass at
-`GN_POLL`, default 0.75 s. Do not simplify it to one half or the other.
+The shipped design is a hybrid: KVO plus a forced-sync pass on a fixed 50 ms
+interval. Neither half is exposed; the interval is a private constant.
 
-End-to-end delivery with the default, timing from the `defaults write` to the
-observer's callback, five changes:
+Measured at a 750 ms interval, timing from a `defaults write` to the observer's
+callback over five changes: 138 ms fastest, 335 median, 671 slowest — a uniform
+spread across the interval, which is what a poll of that period predicts. The
+sync, not KVO, is what delivers. At the shipped 50 ms the same distribution
+gives 0–50 ms, median ~25 ms.
 
-| | ms |
-|---|---|
-| fastest | 138 |
-| median | 335 |
-| slowest | 671 |
+**KVO alone delivered nothing** in the same test: with the pass disabled, two
+changes 40 s apart produced no callback beyond the priming one at construction.
+Without the forced sync the process never re-reads the global domain, so a
+foreign write goes unnoticed. That is why the interval is not a knob — there is
+no useful setting other than "on".
 
-A uniform spread across the 750 ms interval, which is what a poll of that period
-predicts — the sync, not KVO, is what delivers.
+The caveat that applies to any `defaults write` result here: it is not the path
+a user takes, and a change driven through the Settings UI may reach KVO by a
+route this test does not exercise.
 
-**`Reconcile::KvoOnly` did not deliver at all** in the same test: two changes,
-40 s apart, produced no callback beyond the priming one at construction. Without
-the forced sync this process never re-reads the global domain, so a foreign
-write goes unnoticed. Note the caveat that applies to any `defaults write`
-result here — it is not the path a user takes, and a change driven through the
-Settings UI may reach KVO by a route this test does not exercise. Either way the
-hybrid is what is shipped, and it is what these figures describe.
+AppKit exports `NSWorkspaceIconAppearanceConfigurationDidChangeNotification`,
+which appears in no public header. It resolves at runtime. Whether it is posted
+for a real Settings change is not established; it did not fire for a
+`defaults write`, which is consistent with that write never being applied.
 
 The forced sync measures 0.0% CPU in both this process and cfprefsd even at
 3 syncs/second.
