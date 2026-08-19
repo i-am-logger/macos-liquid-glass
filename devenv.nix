@@ -22,6 +22,13 @@ in
   packages = [
     pkgs.git
     pkgs.pkg-config
+    # macOS 26 SDK. nixpkgs' darwin stdenv defaults to apple-sdk 14.4, which
+    # predates every API this crate is built on: NSGlassEffectView, the Icon &
+    # widget style configuration, and the notification AppKit posts when it
+    # changes. objc2 looks CLASSES up by name at runtime, so the old SDK still
+    # compiled — but a linked SYMBOL cannot be resolved that way, and linking
+    # one against 14.4 fails with "Undefined symbols for architecture arm64".
+    pkgs.apple-sdk_26
   ];
 
   # Development scripts
