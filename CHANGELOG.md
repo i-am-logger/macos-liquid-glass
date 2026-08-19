@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.3](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.2...v1.0.0-beta.3) - 2026-08-19
+
+### Docs
+
+- say plainly that IconStyle is a lossy grouping
+
+### Feat
+
+- let a window follow the icon style without holding the observer
+
 ## [1.0.0-beta.2](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.1...v1.0.0-beta.2) - 2026-08-19
 
 ### Docs
