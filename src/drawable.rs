@@ -167,6 +167,15 @@ pub struct Scroll {
     pub modifiers: Modifiers,
 }
 
+/// Whether the view holds keyboard focus.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Focus {
+    /// The view became the key window's first responder.
+    Gained,
+    /// The view stopped being it.
+    Lost,
+}
+
 /// A rectangle in the view's points, origin top-left, for the input
 /// manager's candidate window.
 #[derive(Clone, Copy, Debug, Default)]
@@ -206,7 +215,7 @@ pub trait Responder {
     /// `CACurrentMediaTime` seconds.
     fn frame(&mut self, target: f64);
     /// The view became or stopped being the key window's first responder.
-    fn focus(&mut self, focused: bool);
+    fn focus(&mut self, focus: Focus);
     /// Where the text cursor is, for the candidate window.
     fn cursor_rect(&self) -> Rect;
 }
@@ -287,7 +296,7 @@ define_class!(
         fn become_first_responder(&self) -> bool {
             let ok: bool = unsafe { msg_send![super(self), becomeFirstResponder] };
             if ok {
-                self.with_responder(|r| r.focus(true));
+                self.with_responder(|r| r.focus(Focus::Gained));
             }
             ok
         }
@@ -296,7 +305,7 @@ define_class!(
         fn resign_first_responder(&self) -> bool {
             let ok: bool = unsafe { msg_send![super(self), resignFirstResponder] };
             if ok {
-                self.with_responder(|r| r.focus(false));
+                self.with_responder(|r| r.focus(Focus::Lost));
             }
             ok
         }
