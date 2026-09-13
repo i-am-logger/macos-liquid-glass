@@ -29,11 +29,12 @@
 //! `deleteBackward:`). The view is an `NSTextInputClient`, so the
 //! candidate window lands where [`Responder::cursor_rect`] says.
 
+use core::ptr::NonNull;
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{AllocAnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AllocAnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSEvent, NSEventModifierFlags, NSResponder, NSTextInputClient, NSTrackingArea,
     NSTrackingAreaOptions, NSView,
@@ -218,6 +219,86 @@ pub trait Responder {
     fn focus(&mut self, focus: Focus);
     /// Where the text cursor is, for the candidate window.
     fn cursor_rect(&self) -> Rect;
+    /// Another thread asked for the responder's attention through a
+    /// [`Waker`]: bytes arrived, a frame completed. Delivered on the main
+    /// thread. Nothing by default, so a responder that never hands out a
+    /// waker need not know one exists.
+    fn wake(&mut self) {}
+}
+
+/// A handle that reaches the view from any thread, so a reader thread or
+/// a GPU completion callback can ask the main thread to do something
+/// without waiting for it: [`Waker::wake`] delivers [`Responder::wake`],
+/// [`Waker::present`] shows a surface. Both go through
+/// `performSelectorOnMainThread:withObject:waitUntilDone:NO`, which
+/// AppKit documents as safe from any thread, and neither blocks the
+/// caller.
+///
+/// It retains the view for the life of the process rather than releasing
+/// it on drop, because an `NSView` must be released on the main thread
+/// and a waker is dropped wherever its thread ends -- which is also why a
+/// copy retains nothing more: the one retain outlives every copy.
+#[derive(Clone, Copy)]
+pub struct Waker {
+    view: NonNull<AnyObject>,
+}
+
+// SAFETY: the only operations on `view` are `performSelectorOnMainThread`
+// calls, which AppKit documents as callable from any thread; the pointer
+// is retained once and never released, so it stays valid for the life of
+// the process.
+unsafe impl Send for Waker {}
+unsafe impl Sync for Waker {}
+
+impl Waker {
+    /// Asks the main thread to call [`Responder::wake`]. Returns at once.
+    pub fn wake(&self) {
+        // SAFETY: the view is retained for the life of the process and
+        // implements `wake:`; the selector is performed on the main thread
+        // without waiting, which is the documented cross-thread contract.
+        unsafe {
+            let _: () = msg_send![
+                self.view.as_ptr(),
+                performSelectorOnMainThread: sel!(wake:),
+                withObject: core::ptr::null::<AnyObject>(),
+                waitUntilDone: false,
+            ];
+        }
+    }
+
+    /// Asks the main thread to show `surface` on the view. Returns at
+    /// once; the surface is retained until it has been shown.
+    pub fn present(&self, surface: &SurfaceHandle) {
+        // SAFETY: as in `wake`; the argument is an `IOSurface`, which is
+        // thread-safe and which `performSelectorOnMainThread` retains
+        // until the selector has run.
+        unsafe {
+            let _: () = msg_send![
+                self.view.as_ptr(),
+                performSelectorOnMainThread: sel!(presentSurface:),
+                withObject: surface.0.as_ptr(),
+                waitUntilDone: false,
+            ];
+        }
+    }
+}
+
+/// An `IOSurface` a [`Waker`] can present from any thread: retained for
+/// the life of the handle, and thread-safe because `IOSurface` is.
+pub struct SurfaceHandle(NonNull<IOSurface>);
+
+// SAFETY: `IOSurface` is documented thread-safe, and the handle only
+// passes the pointer to `performSelectorOnMainThread`, which retains it.
+unsafe impl Send for SurfaceHandle {}
+unsafe impl Sync for SurfaceHandle {}
+
+impl Drop for SurfaceHandle {
+    fn drop(&mut self) {
+        // SAFETY: the pointer was retained in `Surface::handle` and is
+        // released exactly once here; `IOSurface` may be released on any
+        // thread.
+        unsafe { objc2::ffi::objc_release(self.0.as_ptr().cast()) };
+    }
 }
 
 /// The view's state that the class methods reach through `ivars()`.
@@ -430,6 +511,19 @@ define_class!(
             let target = link.targetTimestamp();
             self.with_responder(|r| r.frame(target));
         }
+
+        /// A [`Waker::wake`], arriving on the main thread.
+        #[unsafe(method(wake:))]
+        fn wake(&self, _ignored: Option<&AnyObject>) {
+            self.with_responder(|r| r.wake());
+        }
+
+        /// A [`Waker::present`], arriving on the main thread with the
+        /// surface to show.
+        #[unsafe(method(presentSurface:))]
+        fn present_surface(&self, surface: &IOSurface) {
+            self.set_surface(surface);
+        }
     }
 
     unsafe impl NSObjectProtocol for DrawableView {}
@@ -620,6 +714,16 @@ impl DrawableView {
         *self.ivars().link.borrow_mut() = Some(link);
     }
 
+    /// A handle that reaches this view from any thread.
+    pub fn waker(&self) -> Waker {
+        let retained: Retained<DrawableView> = self.retain();
+        // The waker never releases: see its doc.
+        let ptr = Retained::into_raw(retained).cast::<AnyObject>();
+        Waker {
+            view: NonNull::new(ptr).expect("a retained object is not null"),
+        }
+    }
+
     /// Stops the display link, if one is running.
     pub fn stop_display_link(&self) {
         if let Some(link) = self.ivars().link.borrow_mut().take() {
@@ -746,6 +850,13 @@ impl Surface {
     /// texture.
     pub fn io_surface(&self) -> &IOSurface {
         &self.inner
+    }
+
+    /// A retained handle to the surface a [`Waker`] can present from any
+    /// thread.
+    pub fn handle(&self) -> SurfaceHandle {
+        let retained: Retained<IOSurface> = self.inner.clone();
+        SurfaceHandle(NonNull::new(Retained::into_raw(retained)).expect("retained"))
     }
 
     /// Runs `f` over the pixels under the surface's lock: `stride` words a
