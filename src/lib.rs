@@ -171,12 +171,16 @@ pub use {objc2, objc2_app_kit, objc2_core_foundation, objc2_foundation};
 
 #[cfg(target_os = "macos")]
 pub mod accessibility;
+#[cfg(all(target_os = "macos", feature = "drawable"))]
+pub mod drawable;
 #[cfg(all(target_os = "macos", feature = "glass"))]
 pub mod glass;
 #[cfg(all(target_os = "macos", feature = "icon-style"))]
 pub mod icon_style;
 #[cfg(all(target_os = "macos", feature = "window"))]
 pub mod window;
+#[cfg(all(target_os = "macos", feature = "drawable"))]
+pub use {objc2_io_surface, objc2_quartz_core};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua};
