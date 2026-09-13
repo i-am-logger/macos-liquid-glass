@@ -44,7 +44,11 @@ use objc2_foundation::{
     NSObjectProtocol, NSPoint, NSRange, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString,
     NSUInteger,
 };
-use objc2_io_surface::IOSurface;
+use objc2_foundation::{NSDictionary, NSNumber};
+use objc2_io_surface::{
+    IOSurface, IOSurfaceLockOptions, IOSurfacePropertyKey, IOSurfacePropertyKeyBytesPerElement,
+    IOSurfacePropertyKeyHeight, IOSurfacePropertyKeyPixelFormat, IOSurfacePropertyKeyWidth,
+};
 use objc2_quartz_core::{CADisplayLink, CALayer, CATransaction, kCAGravityTopLeft};
 
 /// The modifier keys held during an event, as the responder reads them.
@@ -655,4 +659,126 @@ impl Drop for DrawableIvars {
 /// A protocol object of the view, for AppKit APIs that take one.
 pub fn as_text_input_client(view: &DrawableView) -> &ProtocolObject<dyn NSTextInputClient> {
     ProtocolObject::from_ref(view)
+}
+
+/// A BGRA, 32-bit `IOSurface` a renderer writes into on the CPU.
+///
+/// `write` takes the surface's lock, hands the pixels over as one slice of
+/// `0xAARRGGBB` words -- **premultiplied**, which is what Core Animation
+/// reads -- with the row stride the kernel chose, and releases the lock.
+/// Show it with [`DrawableView::set_surface`]; then leave it alone until
+/// another surface is showing, which is why a presenter rotates through
+/// three.
+pub struct Surface {
+    inner: Retained<IOSurface>,
+    width: usize,
+    height: usize,
+    /// Pixels per row, which the kernel may round up from `width`.
+    stride: usize,
+}
+
+impl Surface {
+    /// `'BGRA'`, little-endian `0xAARRGGBB` words.
+    const BGRA: u32 = 0x4247_5241;
+
+    /// A surface of `width` by `height` pixels; `None` when the kernel
+    /// declines, or for a zero side.
+    pub fn new(width: usize, height: usize) -> Option<Surface> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let number = |v: usize| -> Retained<AnyObject> {
+            let n = NSNumber::new_usize(v);
+            Retained::into_super(Retained::into_super(Retained::into_super(n)))
+        };
+        // SAFETY: the four property keys are IOSurface framework constants.
+        let (k_w, k_h, k_bpe, k_fmt): (
+            &IOSurfacePropertyKey,
+            &IOSurfacePropertyKey,
+            &IOSurfacePropertyKey,
+            &IOSurfacePropertyKey,
+        ) = unsafe {
+            (
+                IOSurfacePropertyKeyWidth,
+                IOSurfacePropertyKeyHeight,
+                IOSurfacePropertyKeyBytesPerElement,
+                IOSurfacePropertyKeyPixelFormat,
+            )
+        };
+        let values = [
+            number(width),
+            number(height),
+            number(4),
+            number(usize::try_from(Surface::BGRA).ok()?),
+        ];
+        let props: Retained<NSDictionary<IOSurfacePropertyKey, AnyObject>> =
+            NSDictionary::from_retained_objects(&[k_w, k_h, k_bpe, k_fmt], &values);
+        let inner = IOSurface::initWithProperties(IOSurface::alloc(), &props)?;
+        let stride = usize::try_from(inner.bytesPerRow()).ok()? / 4;
+        Some(Surface {
+            inner,
+            width,
+            height,
+            stride,
+        })
+    }
+
+    /// Width and height in pixels.
+    pub fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    /// Pixels from one row to the next in the slice `write` hands over.
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// The `IOSurface` itself, for [`DrawableView::set_surface`] or a Metal
+    /// texture.
+    pub fn io_surface(&self) -> &IOSurface {
+        &self.inner
+    }
+
+    /// Runs `f` over the pixels under the surface's lock: `stride` words a
+    /// row, `height` rows. Returns `false`, and does not call `f`, when the
+    /// lock is refused.
+    pub fn write(&self, f: impl FnOnce(&mut [u32], usize)) -> bool {
+        let opts = IOSurfaceLockOptions::empty();
+        // SAFETY: a null seed is documented as "not wanted".
+        if self.inner.lockWithOptions_seed(opts, std::ptr::null_mut()) != 0 {
+            return false;
+        }
+        let words = self.stride * self.height;
+        // SAFETY: while locked, the base address is a mapping of at least
+        // `bytesPerRow * height` bytes that nothing else writes; it is
+        // 4-byte aligned for a 32-bit format, and the slice does not
+        // outlive the lock because `f` returns before `unlock`.
+        let pixels = unsafe {
+            std::slice::from_raw_parts_mut(self.inner.baseAddress().as_ptr().cast::<u32>(), words)
+        };
+        f(pixels, self.stride);
+        self.inner
+            .unlockWithOptions_seed(opts, std::ptr::null_mut());
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Surface;
+
+    #[test]
+    fn a_surface_takes_pixels_and_reports_its_stride() {
+        let s = Surface::new(5, 3).expect("the kernel makes a 5x3 BGRA surface");
+        assert_eq!(s.size(), (5, 3));
+        assert!(s.stride() >= 5, "{}", s.stride());
+        let stride = s.stride();
+        assert!(s.write(|px, st| {
+            assert_eq!(st, stride);
+            assert_eq!(px.len(), stride * 3);
+            px[st * 2 + 4] = 0xFF11_2233;
+        }));
+        assert!(s.write(|px, st| assert_eq!(px[st * 2 + 4], 0xFF11_2233)));
+        assert!(Surface::new(0, 3).is_none());
+    }
 }
