@@ -79,6 +79,16 @@ icon-style = []
 # asked for it gets no signal. Audit with:
 #   cargo tree -e features -i macos-liquid-glass
 private-spi = []
+# A content view a renderer paints into: an `NSView` whose layer shows an
+# `IOSurface`, a display link, a responder for input, an `NSTextInputClient`.
+# Two more crates of the same family, and `objc2-app-kit`'s QuartzCore edge
+# for the display link's return type.
+drawable = [
+    "dep:objc2-quartz-core",
+    "dep:objc2-io-surface",
+    "dep:objc2-core-graphics",
+    "objc2-app-kit/objc2-quartz-core",
+]
 
 # Every AppKit class this crate touches is in objc2-app-kit's default set (306
 # of its 314 features are on by default), so there is no explicit feature list
@@ -89,6 +99,9 @@ objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3"
 objc2-core-foundation = "0.3"
+objc2-quartz-core = { version = "0.3.2", optional = true }
+objc2-io-surface = { version = "0.3.2", optional = true, features = ["objc2-foundation", "IOSurfaceTypes", "libc"] }
+objc2-core-graphics = { version = "0.3.2", optional = true }
 # No dispatch2. The KVO callback must ENQUEUE rather than act — it arrives while
 # CFPrefs holds its own lock — and `performSelectorOnMainThread:…:waitUntilDone:NO`
 # is documented to enqueue even when already on the main thread. dispatch2's

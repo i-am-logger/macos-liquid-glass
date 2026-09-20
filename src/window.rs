@@ -525,6 +525,21 @@ impl GlassWindow {
         self.window.mtm()
     }
 
+    /// Makes `view` the window's first responder, so key events reach it.
+    pub fn make_first_responder(&self, view: &NSView) -> bool {
+        self.window.makeFirstResponder(Some(view))
+    }
+
+    /// The smallest content size the window may be resized to.
+    pub fn set_min_size(&self, size: NSSize) {
+        self.window.setMinSize(size);
+    }
+
+    /// Whether mouse-moved events are delivered to the window's views.
+    pub fn set_accepts_mouse_moved(&self, accepts: bool) {
+        self.window.setAcceptsMouseMovedEvents(accepts);
+    }
+
     /// The underlying `NSWindow`, for anything this wrapper does not cover.
     #[must_use]
     pub fn ns_window(&self) -> &NSWindow {
