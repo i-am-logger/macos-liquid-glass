@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.5](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.4...v1.0.0-beta.5) - 2026-09-20
+
+### Docs
+
+- name the types the default features do not build, rather than linking to them
+
+### Feat
+
+- the surface a terminal needs -- appearance, colour space, menu, icon
+- a Waker that reaches the view from any thread, and a wake for the responder
+- Responder::focus takes Focus, not a bool
+- Surface, a BGRA IOSurface with a locked write
+- a drawable content view, a display link, a responder, and three window helpers
+
 ## [1.0.0-beta.4](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.3...v1.0.0-beta.4) - 2026-08-19
 
 ### Build
