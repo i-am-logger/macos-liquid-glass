@@ -1,8 +1,11 @@
 //! The application's main menu: the three menus every macOS app carries,
 //! wired to the standard responder-chain actions, so `Cmd-Q` quits, `Cmd-W`
 //! closes the window, `Cmd-M` minimises, and `Cmd-C`/`Cmd-V` reach the
-//! first responder's `copy:` and `paste:` -- which [`crate::drawable::DrawableView`]
-//! forwards to its [`crate::drawable::Responder::command`].
+//! first responder's `copy:` and `paste:` -- which `DrawableView` forwards to
+//! its `Responder::command`. Both are behind the `drawable` feature, so these
+//! are named rather than linked: this module is not gated on it, and an
+//! intra-doc link into a module the default features do not build resolves
+//! nowhere.
 //!
 //! A consumer that `forbid`s `unsafe` cannot set a menu item's action, which
 //! the bindings make `unsafe` because a selector is an unchecked name; the

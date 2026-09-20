@@ -258,10 +258,11 @@ pub trait Responder {
     /// comparing appearance names, which that function documents as wrong.
     ///
     /// A host painting its own content needs this and cannot get it from
-    /// [`StyleObserver`]: that watches the icon and widget style, a
-    /// different setting on a different axis. Nothing by default.
-    ///
-    /// [`StyleObserver`]: crate::icon_style::StyleObserver
+    /// `StyleObserver`: that watches the icon and widget style, a different
+    /// setting on a different axis. Nothing by default. Named rather than
+    /// linked, because `icon_style` is its own feature and this trait is not
+    /// gated on it -- `drawable` without `icon-style` is a combination a
+    /// consumer can ask for, and a link would dangle in it.
     fn appearance(&mut self, appearance: Appearance) {
         let _ = appearance;
     }
