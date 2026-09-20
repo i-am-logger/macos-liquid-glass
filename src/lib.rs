@@ -177,6 +177,8 @@ pub mod drawable;
 pub mod glass;
 #[cfg(all(target_os = "macos", feature = "icon-style"))]
 pub mod icon_style;
+#[cfg(target_os = "macos")]
+pub mod menu;
 #[cfg(all(target_os = "macos", feature = "window"))]
 pub mod window;
 #[cfg(all(target_os = "macos", feature = "drawable"))]
@@ -220,6 +222,62 @@ pub fn is_dark(ambient: &NSAppearance) -> bool {
         Some(best) => &*best == unsafe { NSAppearanceNameDarkAqua },
         None => false,
     }
+}
+
+// ── icons ───────────────────────────────────────────────────────────────────
+//
+// A consumer that `forbid`s `unsafe` — as a renderer that only wants a window
+// should — cannot call the objc2 image setters, which are `unsafe`. These wrap
+// the three an app needs: decode bytes, set the dock icon, make an image view.
+
+#[cfg(target_os = "macos")]
+use objc2::AllocAnyThread;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSImage, NSImageScaling, NSImageView};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{MainThreadMarker, NSData};
+
+/// Decode encoded image bytes (PNG, JPEG, …) into an `NSImage`, or `None` if
+/// the data is not a decodable image.
+#[cfg(target_os = "macos")]
+pub fn image_from_bytes(bytes: &[u8]) -> Option<Retained<NSImage>> {
+    let data = NSData::with_bytes(bytes);
+    NSImage::initWithData(NSImage::alloc(), &data)
+}
+
+/// The AppKit the process is running against, as `NSAppKitVersionNumber`
+/// -- the build number a launch measurement should be recorded beside.
+/// Reading it is also the one reference to an AppKit *symbol* a binary
+/// that reaches every class by name through the runtime has, which is
+/// what keeps the framework's load command when the link dead-strips the
+/// dylibs nothing references: `-needed_framework` only works ahead of the
+/// `-framework` the bindings emit, and a build script's link arguments
+/// come after it.
+#[cfg(target_os = "macos")]
+pub fn appkit_version() -> f64 {
+    // SAFETY: an extern static AppKit defines and initialises when it
+    // loads, read once and never written.
+    unsafe { objc2_app_kit::NSAppKitVersionNumber }
+}
+
+/// Set the application's dock and Cmd-Tab icon.
+#[cfg(target_os = "macos")]
+pub fn set_application_icon(app: &NSApplication, image: &NSImage) {
+    // SAFETY: AppKit copies the image; setting the app icon has no aliasing or
+    // lifetime hazard.
+    unsafe { app.setApplicationIconImage(Some(image)) };
+}
+
+/// An `NSImageView` showing `image`, scaled to fit — for a titlebar strip or
+/// anywhere the caller then positions with `setFrame`/autoresizing.
+#[cfg(target_os = "macos")]
+pub fn icon_view(mtm: MainThreadMarker, image: &NSImage) -> Retained<NSImageView> {
+    let view = NSImageView::new(mtm);
+    view.setImage(Some(image));
+    view.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+    view
 }
 
 #[cfg(all(test, target_os = "macos"))]

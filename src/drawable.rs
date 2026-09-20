@@ -36,8 +36,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AllocAnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSEvent, NSEventModifierFlags, NSResponder, NSTextInputClient, NSTrackingArea,
-    NSTrackingAreaOptions, NSView,
+    NSAppearanceCustomization, NSEvent, NSEventModifierFlags, NSResponder, NSTextInputClient,
+    NSTrackingArea, NSTrackingAreaOptions, NSView,
 };
 use objc2_core_foundation::CGFloat;
 use objc2_foundation::{
@@ -49,6 +49,7 @@ use objc2_foundation::{NSDictionary, NSNumber};
 use objc2_io_surface::{
     IOSurface, IOSurfaceLockOptions, IOSurfacePropertyKey, IOSurfacePropertyKeyBytesPerElement,
     IOSurfacePropertyKeyHeight, IOSurfacePropertyKeyPixelFormat, IOSurfacePropertyKeyWidth,
+    IOSurfaceRef,
 };
 use objc2_quartz_core::{CADisplayLink, CALayer, CATransaction, kCAGravityTopLeft};
 
@@ -177,6 +178,22 @@ pub enum Focus {
     Lost,
 }
 
+/// Which way the view's *effective* appearance resolves.
+///
+/// This is the system light/dark axis, and deliberately not the icon and
+/// widget style's own: `WidgetStyle::appearance` forces a mode that is
+/// independent of the system's, and under the Default selection it infers
+/// light whatever the system is doing. A host that wants its own colours to
+/// follow the system reads this; a host that wants them to follow the icon
+/// style reads that.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Appearance {
+    /// The view resolves light.
+    Light,
+    /// The view resolves dark.
+    Dark,
+}
+
 /// A rectangle in the view's points, origin top-left, for the input
 /// manager's candidate window.
 #[derive(Clone, Copy, Debug, Default)]
@@ -200,7 +217,9 @@ pub trait Responder {
     /// composition, an IME commit.
     fn text(&mut self, text: &str);
     /// A command selector the input manager chose for a key it did not
-    /// turn into text -- `deleteBackward:`, `insertNewline:`, `moveUp:`.
+    /// turn into text -- `deleteBackward:`, `insertNewline:`, `moveUp:` --
+    /// or a menu action sent to the view: `copy:`, `paste:`, `zoomIn:`,
+    /// `zoomOut:`, `zoomActual:`.
     fn command(&mut self, selector: &str);
     /// The text being composed by an IME, to show at the cursor; empty
     /// when composition ends.
@@ -224,6 +243,28 @@ pub trait Responder {
     /// thread. Nothing by default, so a responder that never hands out a
     /// waker need not know one exists.
     fn wake(&mut self) {}
+    /// A surface a [`Waker::present`] handed over is on the layer: the
+    /// `CATransaction` that set it as the contents has just committed, on
+    /// the main thread, and the corresponding [`Responder::wake`] is still
+    /// queued behind it. This is the moment a frame is *presented* as far
+    /// as the process can see; a responder that times its frames stamps
+    /// here rather than at the wake, which any other thread can also send.
+    /// Nothing by default.
+    fn presented(&mut self) {}
+
+    /// The view's effective appearance changed: a system light/dark flip,
+    /// the window being given an appearance, or a move to a screen under a
+    /// different one. Resolved through [`crate::is_dark`] rather than by
+    /// comparing appearance names, which that function documents as wrong.
+    ///
+    /// A host painting its own content needs this and cannot get it from
+    /// [`StyleObserver`]: that watches the icon and widget style, a
+    /// different setting on a different axis. Nothing by default.
+    ///
+    /// [`StyleObserver`]: crate::icon_style::StyleObserver
+    fn appearance(&mut self, appearance: Appearance) {
+        let _ = appearance;
+    }
 }
 
 /// A handle that reaches the view from any thread, so a reader thread or
@@ -256,12 +297,18 @@ impl Waker {
         // SAFETY: the view is retained for the life of the process and
         // implements `wake:`; the selector is performed on the main thread
         // without waiting, which is the documented cross-thread contract.
+        // Delivered in the common modes -- not the default mode alone -- so
+        // it fires during a modal event-tracking loop (a live window resize),
+        // where a default-mode perform sits undelivered until the drag ends
+        // and the window would appear frozen.
         unsafe {
+            let modes = NSArray::from_slice(&[NSRunLoopCommonModes]);
             let _: () = msg_send![
                 self.view.as_ptr(),
                 performSelectorOnMainThread: sel!(wake:),
                 withObject: core::ptr::null::<AnyObject>(),
                 waitUntilDone: false,
+                modes: &*modes,
             ];
         }
     }
@@ -271,13 +318,16 @@ impl Waker {
     pub fn present(&self, surface: &SurfaceHandle) {
         // SAFETY: as in `wake`; the argument is an `IOSurface`, which is
         // thread-safe and which `performSelectorOnMainThread` retains
-        // until the selector has run.
+        // until the selector has run. In the common modes, so a frame that
+        // completes mid-resize reaches the layer during the drag.
         unsafe {
+            let modes = NSArray::from_slice(&[NSRunLoopCommonModes]);
             let _: () = msg_send![
                 self.view.as_ptr(),
                 performSelectorOnMainThread: sel!(presentSurface:),
                 withObject: surface.0.as_ptr(),
                 waitUntilDone: false,
+                modes: &*modes,
             ];
         }
     }
@@ -366,6 +416,17 @@ define_class!(
             self.notify_resized();
         }
 
+        #[unsafe(method(viewDidChangeEffectiveAppearance))]
+        fn view_did_change_effective_appearance(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidChangeEffectiveAppearance] };
+            let appearance = if crate::is_dark(&self.effectiveAppearance()) {
+                Appearance::Dark
+            } else {
+                Appearance::Light
+            };
+            self.with_responder(|r| r.appearance(appearance));
+        }
+
         #[unsafe(method(viewDidMoveToWindow))]
         fn view_did_move_to_window(&self) {
             let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
@@ -414,6 +475,35 @@ define_class!(
 
         #[unsafe(method(flagsChanged:))]
         fn flags_changed(&self, _event: &NSEvent) {}
+
+        // The Edit menu's actions, sent down the responder chain by a key
+        // equivalent or a click on the item: the responder gets them as the
+        // selector, the way the input manager's commands arrive.
+        #[unsafe(method(copy:))]
+        fn copy_(&self, _sender: Option<&AnyObject>) {
+            self.with_responder(|r| r.command("copy:"));
+        }
+
+        #[unsafe(method(paste:))]
+        fn paste_(&self, _sender: Option<&AnyObject>) {
+            self.with_responder(|r| r.command("paste:"));
+        }
+
+        // The View menu's zoom actions, the same way.
+        #[unsafe(method(zoomIn:))]
+        fn zoom_in(&self, _sender: Option<&AnyObject>) {
+            self.with_responder(|r| r.command("zoomIn:"));
+        }
+
+        #[unsafe(method(zoomOut:))]
+        fn zoom_out(&self, _sender: Option<&AnyObject>) {
+            self.with_responder(|r| r.command("zoomOut:"));
+        }
+
+        #[unsafe(method(zoomActual:))]
+        fn zoom_actual(&self, _sender: Option<&AnyObject>) {
+            self.with_responder(|r| r.command("zoomActual:"));
+        }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
@@ -523,6 +613,7 @@ define_class!(
         #[unsafe(method(presentSurface:))]
         fn present_surface(&self, surface: &IOSurface) {
             self.set_surface(surface);
+            self.with_responder(|r| r.presented());
         }
     }
 
@@ -774,6 +865,21 @@ pub fn as_text_input_client(view: &DrawableView) -> &ProtocolObject<dyn NSTextIn
     ProtocolObject::from_ref(view)
 }
 
+/// The colour space the surface's bytes are in, which Core Animation
+/// converts from to whatever display the window is on. A terminal's
+/// colours are specified as sRGB, so that is the default; Display P3 reads
+/// the same bytes as the wider gamut, for a caller that wants that on
+/// purpose. Untagged, a surface is shown as the display's native values,
+/// which differ from display to display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ColorSpace {
+    /// The bytes are sRGB, what a terminal's colours are specified as.
+    #[default]
+    Srgb,
+    /// The bytes are Display P3, the wider gamut, on purpose.
+    DisplayP3,
+}
+
 /// A BGRA, 32-bit `IOSurface` a renderer writes into on the CPU.
 ///
 /// `write` takes the surface's lock, hands the pixels over as one slice of
@@ -794,9 +900,14 @@ impl Surface {
     /// `'BGRA'`, little-endian `0xAARRGGBB` words.
     const BGRA: u32 = 0x4247_5241;
 
-    /// A surface of `width` by `height` pixels; `None` when the kernel
-    /// declines, or for a zero side.
+    /// A surface of `width` by `height` pixels, tagged sRGB; `None` when
+    /// the kernel declines, or for a zero side.
     pub fn new(width: usize, height: usize) -> Option<Surface> {
+        Surface::in_space(width, height, ColorSpace::Srgb)
+    }
+
+    /// A surface of `width` by `height` pixels whose bytes are in `space`.
+    pub fn in_space(width: usize, height: usize, space: ColorSpace) -> Option<Surface> {
         if width == 0 || height == 0 {
             return None;
         }
@@ -827,6 +938,28 @@ impl Surface {
         let props: Retained<NSDictionary<IOSurfacePropertyKey, AnyObject>> =
             NSDictionary::from_retained_objects(&[k_w, k_h, k_bpe, k_fmt], &values);
         let inner = IOSurface::initWithProperties(IOSurface::alloc(), &props)?;
+        // The colour space, serialised the way the key's documentation
+        // asks (`CGColorSpaceCopyPropertyList`), so the compositor converts
+        // the bytes to each display rather than showing them native.
+        // SAFETY: the two names are CoreGraphics framework constants.
+        let name = unsafe {
+            match space {
+                ColorSpace::Srgb => objc2_core_graphics::kCGColorSpaceSRGB,
+                ColorSpace::DisplayP3 => objc2_core_graphics::kCGColorSpaceDisplayP3,
+            }
+        };
+        let cg = objc2_core_graphics::CGColorSpace::with_name(Some(name))?;
+        let plist = cg.property_list()?;
+        // SAFETY: `IOSurface` the class and `IOSurfaceRef` the C type are one
+        // object under two names (toll-free bridged); the key is the
+        // framework's constant, and the value is the serialised colour space
+        // it documents.
+        unsafe {
+            let r: &IOSurfaceRef = core::ptr::NonNull::from(&*inner)
+                .cast::<IOSurfaceRef>()
+                .as_ref();
+            r.set_value(objc2_io_surface::kIOSurfaceColorSpace, &plist);
+        }
         let stride = usize::try_from(inner.bytesPerRow()).ok()? / 4;
         Some(Surface {
             inner,
