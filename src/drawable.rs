@@ -27,7 +27,9 @@
 //! input manager and comes back as [`Responder::text`] (including dead
 //! keys and an IME commit) or [`Responder::command`] (a selector such as
 //! `deleteBackward:`). The view is an `NSTextInputClient`, so the
-//! candidate window lands where [`Responder::cursor_rect`] says.
+//! candidate window lands where [`Responder::cursor_rect`] says. A key's
+//! release goes to [`Responder::key_released`] and nowhere else: the input
+//! manager has no use for it.
 
 use core::ptr::NonNull;
 use std::cell::{Cell, RefCell};
@@ -80,7 +82,8 @@ impl Modifiers {
     }
 }
 
-/// A key press as AppKit delivered it, before interpretation.
+/// A key press as AppKit delivered it, before interpretation; the same
+/// fields describe its release, which [`Responder::key_released`] receives.
 #[derive(Clone, Debug)]
 pub struct KeyPress {
     /// The hardware key code, `NSEvent.keyCode`.
@@ -91,8 +94,29 @@ pub struct KeyPress {
     pub unmodified: String,
     /// The modifiers held.
     pub modifiers: Modifiers,
-    /// A key-repeat rather than a fresh press.
+    /// A key-repeat rather than a fresh press; always `false` for a
+    /// release.
     pub repeat: bool,
+}
+
+impl KeyPress {
+    /// The fields of a `keyDown:` or `keyUp:` event. Only those two:
+    /// `characters` raises on any other kind of event.
+    fn of(event: &NSEvent) -> KeyPress {
+        KeyPress {
+            key_code: event.keyCode(),
+            characters: event
+                .characters()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            unmodified: event
+                .charactersIgnoringModifiers()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            modifiers: Modifiers::of(event.modifierFlags()),
+            repeat: event.isARepeat(),
+        }
+    }
 }
 
 /// What a responder did with a key press.
@@ -213,6 +237,22 @@ pub trait Responder {
     /// A key went down. Answer [`Handled::Interpret`] to let the input
     /// manager turn it into text or a command.
     fn key(&mut self, key: &KeyPress) -> Handled;
+    /// A key came up: AppKit's `keyUp:`, one for each key that went down,
+    /// however many repeats it sent between. Delivered whether the press
+    /// was consumed or interpreted, and never interpreted itself. Nothing
+    /// by default, so a responder that wants presses alone need not know
+    /// releases exist.
+    ///
+    /// The view hears only the releases the application forwards to it,
+    /// and `-[NSApplication sendEvent:]` keeps a key-up to itself while
+    /// Command is held: measured, a Command-`a` sent through it reaches
+    /// [`Responder::key`] going down and never reaches this coming up,
+    /// where a plain `a` reaches both. This crate does not own the
+    /// application object, so a release with Command held does not arrive
+    /// here; `MEASUREMENTS.md` in the repository has the method.
+    fn key_released(&mut self, key: &KeyPress) {
+        let _ = key;
+    }
     /// Text the input manager produced: a typed character, a dead-key
     /// composition, an IME commit.
     fn text(&mut self, text: &str);
@@ -455,16 +495,7 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            let press = KeyPress {
-                key_code: event.keyCode(),
-                characters: event.characters().map(|s| s.to_string()).unwrap_or_default(),
-                unmodified: event
-                    .charactersIgnoringModifiers()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-                modifiers: Modifiers::of(event.modifierFlags()),
-                repeat: event.isARepeat(),
-            };
+            let press = KeyPress::of(event);
             let handled = self
                 .with_responder(|r| r.key(&press))
                 .unwrap_or(Handled::Interpret);
@@ -472,6 +503,14 @@ define_class!(
                 let events = NSArray::from_slice(&[event]);
                 self.interpretKeyEvents(&events);
             }
+        }
+
+        /// A key came up. The responder alone hears it: the input manager
+        /// interprets presses, and a release is not one.
+        #[unsafe(method(keyUp:))]
+        fn key_up(&self, event: &NSEvent) {
+            let release = KeyPress::of(event);
+            self.with_responder(|r| r.key_released(&release));
         }
 
         #[unsafe(method(flagsChanged:))]

@@ -144,3 +144,12 @@ required-features = ["window", "glass", "icon-style"]
 # `cargo test --example borderless`, so the gap is invisible locally, but never
 # run under the bare `cargo test` that `dev-ci` and CI both use.
 test = true
+
+# The view's event selectors, sent on the main thread. `harness = false`
+# because libtest runs every test on a worker thread, where no
+# `MainThreadMarker` can be had and an `NSView` cannot be made; this
+# target's `main` is the process's main thread.
+[[test]]
+name = "drawable_events"
+required-features = ["drawable"]
+harness = false

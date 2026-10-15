@@ -396,6 +396,32 @@ brighter — an order of magnitude larger than any real difference measured here
 With the observer constructed first, five consecutive launches measure
 byte-identical.
 
+## A key-up with Command held never reaches the view
+
+`DrawableView` overrides `keyUp:`, and a release reaches
+`Responder::key_released` -- unless Command is held. Measured on macOS 27.0
+(26A5425a): a `DrawableView` made first responder of a titled window, with
+`NSApplication.sharedApplication` set up and nothing else, and four events
+made with `keyEventWithType:…` for key code 0 (`a`) and sent through
+`-[NSApplication sendEvent:]`. Three conditions differ from a real session,
+and a re-measurement should lift them: the application ran under the
+Accessory activation policy, the window was **not key** (`isKeyWindow`
+answered no), and the events were synthesized, addressed to the window by
+an explicit `windowNumber` rather than coming from a keyboard.
+
+| flags | `Responder::key` | `Responder::key_released` |
+|---|---|---|
+| none | heard | heard |
+| Command | heard | **never** |
+
+The application dispatches the press (no menu item claims Command-`a`, so it
+falls through to `keyDown:`) and keeps the release. The view cannot recover
+it: the release never reaches the window. A consumer that needs Command
+releases has to see them before the application drops them -- a local event
+monitor, or its own `sendEvent:` -- which this crate does not install.
+`tests/drawable_events.rs` sends to the view directly, so it proves the
+view's half and cannot show this one.
+
 ## Measuring this surface again
 
 - Pin the window to a fixed screen rect and check it arrived. Window position is
