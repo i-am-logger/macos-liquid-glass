@@ -30,7 +30,8 @@
 //! candidate window lands where [`Responder::cursor_rect`] says. A key's
 //! release goes to [`Responder::key_released`] and nowhere else: the input
 //! manager has no use for it. So does a modifier key pressed or released
-//! on its own, to [`Responder::modifiers_changed`].
+//! on its own, to [`Responder::modifiers_changed`]. The click that
+//! brings an inactive window forward reaches [`Responder::mouse`] too.
 
 use core::ptr::NonNull;
 use std::cell::{Cell, RefCell};
@@ -539,6 +540,15 @@ define_class!(
 
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_first_responder(&self) -> bool {
+            true
+        }
+
+        /// Click-through: the click that brings an inactive window forward
+        /// also reaches `mouseDown:`, rather than only activating the
+        /// window as AppKit's default `NO` does. Whatever the event, which
+        /// AppKit may pass as nil.
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
         }
 

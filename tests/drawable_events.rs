@@ -15,9 +15,10 @@ use macos_liquid_glass::drawable::{
     DrawableView, Focus, Handled, KeyPress, ModifierChange, ModifierKey, Mouse, Rect, Responder,
     Scroll,
 };
+use macos_liquid_glass::objc2::MainThreadOnly;
 use macos_liquid_glass::objc2::msg_send;
 use macos_liquid_glass::objc2::rc::Retained;
-use macos_liquid_glass::objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+use macos_liquid_glass::objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSView};
 use macos_liquid_glass::objc2_core_foundation::CGFloat;
 use macos_liquid_glass::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 
@@ -165,6 +166,29 @@ fn a_modifier_key_reaches_the_responder(mtm: MainThreadMarker) {
     );
 }
 
+/// `acceptsFirstMouse:` answers yes, for a click and for the nil AppKit
+/// may pass, where a plain `NSView` answers AppKit's default no.
+fn the_first_click_is_accepted(mtm: MainThreadMarker) {
+    let (view, _) = view(mtm);
+    let click = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::LeftMouseDown,
+        NSPoint::new(10.0, 10.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        0,
+        1,
+        1.0,
+    )
+    .expect("AppKit makes a mouse event");
+    assert!(view.acceptsFirstMouse(Some(&click)));
+    assert!(view.acceptsFirstMouse(None));
+    let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(100.0, 100.0));
+    let plain = NSView::initWithFrame(NSView::alloc(mtm), frame);
+    assert!(!plain.acceptsFirstMouse(Some(&click)), "AppKit's default");
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("a harness-less test's main is the main thread");
     let tests: &[(&str, Test)] = &[
@@ -176,6 +200,7 @@ fn main() {
             "a_modifier_key_reaches_the_responder",
             a_modifier_key_reaches_the_responder,
         ),
+        ("the_first_click_is_accepted", the_first_click_is_accepted),
     ];
     for (name, test) in tests {
         test(mtm);
