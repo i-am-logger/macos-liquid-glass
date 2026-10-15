@@ -12,7 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use macos_liquid_glass::drawable::{
-    DrawableView, Focus, Handled, KeyPress, Mouse, Rect, Responder, Scroll,
+    DrawableView, Focus, Handled, KeyPress, ModifierChange, ModifierKey, Mouse, Rect, Responder,
+    Scroll,
 };
 use macos_liquid_glass::objc2::msg_send;
 use macos_liquid_glass::objc2::rc::Retained;
@@ -25,6 +26,7 @@ use macos_liquid_glass::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NS
 enum Heard {
     Key(u16, bool),
     Released(u16, String, bool),
+    Modifier(Option<ModifierKey>, bool, bool),
 }
 
 struct Recorder(Log);
@@ -41,6 +43,13 @@ impl Responder for Recorder {
             key.key_code,
             key.characters.clone(),
             key.modifiers.shift,
+        ));
+    }
+    fn modifiers_changed(&mut self, change: &ModifierChange) {
+        self.0.borrow_mut().push(Heard::Modifier(
+            change.key,
+            change.pressed,
+            change.modifiers.command,
         ));
     }
     fn text(&mut self, _: &str) {}
@@ -125,12 +134,49 @@ fn a_release_reaches_the_responder(mtm: MainThreadMarker) {
     );
 }
 
+/// `flagsChanged:` reaches `modifiers_changed`, with the side the key
+/// code names and the press or release its flags say. A flags-changed
+/// event raises if its `characters` are read, so this also proves the view
+/// does not read them.
+fn a_modifier_key_reaches_the_responder(mtm: MainThreadMarker) {
+    let (view, heard) = view(mtm);
+    let command = NSEventModifierFlags::Command;
+    // The right Command key's own bit, `NX_DEVICERCMDKEYMASK`.
+    let right = NSEventModifierFlags(command.0 | 0x10);
+    let down = key_event(NSEventType::FlagsChanged, 0x36, "", right, false);
+    let up = key_event(
+        NSEventType::FlagsChanged,
+        0x36,
+        "",
+        NSEventModifierFlags::empty(),
+        false,
+    );
+    // SAFETY: each is a flags-changed event, the type the selector takes.
+    unsafe {
+        let _: () = msg_send![&*view, flagsChanged: &*down];
+        let _: () = msg_send![&*view, flagsChanged: &*up];
+    }
+    assert_eq!(
+        *heard.borrow(),
+        [
+            Heard::Modifier(Some(ModifierKey::RightCommand), true, true),
+            Heard::Modifier(Some(ModifierKey::RightCommand), false, false),
+        ]
+    );
+}
+
 fn main() {
     let mtm = MainThreadMarker::new().expect("a harness-less test's main is the main thread");
-    let tests: &[(&str, Test)] = &[(
-        "a_release_reaches_the_responder",
-        a_release_reaches_the_responder,
-    )];
+    let tests: &[(&str, Test)] = &[
+        (
+            "a_release_reaches_the_responder",
+            a_release_reaches_the_responder,
+        ),
+        (
+            "a_modifier_key_reaches_the_responder",
+            a_modifier_key_reaches_the_responder,
+        ),
+    ];
     for (name, test) in tests {
         test(mtm);
         println!("test {name} ... ok");
