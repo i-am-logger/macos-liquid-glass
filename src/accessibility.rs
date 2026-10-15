@@ -176,7 +176,9 @@ mod tests {
     /// **The lookup finds the function where it exists**, so a `false` from
     /// [`dim_flashing_lights`] is the setting and not a lookup that failed,
     /// which would read exactly like the setting being off. Every macOS this
-    /// test runs on in CI is 13.3 or later, where the symbol must resolve.
+    /// test runs on in CI is 13.3 or later, where the symbol must resolve;
+    /// below 13.3 it fails by design, meaning the OS is older, not that the
+    /// lookup broke.
     #[test]
     fn dim_flashing_lights_resolves_where_macos_has_it() {
         assert!(

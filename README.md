@@ -172,7 +172,7 @@ Unlike the Icon & widget style, these settings do post a notification —
 *workspace's* notification centre rather than `NSNotificationCenter.default`.
 `increase_contrast()`, `differentiate_without_color()` and `reduce_motion()` are
 there too. `dim_flashing_lights()` sits beside them but is MediaAccessibility's
-setting, looked up at run time because it is macOS 13.3's; its change is
+setting, looked up at run time because it first shipped in macOS 13.3; its change is
 `kMADimFlashingLightsChangedNotification` on the local CoreFoundation centre.
 
 ## Requirements

@@ -176,7 +176,7 @@ pub struct ModifierChange {
     pub key: Option<ModifierKey>,
     /// Whether `key` is down now; `false` when `key` is `None`. For Caps
     /// Lock it is whether `NSEventModifierFlagCapsLock` is set after the
-    /// change.
+    /// change, which is not measured on a hardware keyboard.
     pub pressed: bool,
     /// The modifiers held after the change.
     pub modifiers: Modifiers,
@@ -207,8 +207,8 @@ pub struct KeyPress {
     pub unmodified: String,
     /// The modifiers held.
     pub modifiers: Modifiers,
-    /// A key-repeat rather than a fresh press; always `false` for a
-    /// release.
+    /// A key-repeat rather than a fresh press; `false` for the releases
+    /// AppKit sends.
     pub repeat: bool,
 }
 
@@ -350,9 +350,11 @@ pub trait Responder {
     /// A key went down. Answer [`Handled::Interpret`] to let the input
     /// manager turn it into text or a command.
     fn key(&mut self, key: &KeyPress) -> Handled;
-    /// A key came up: AppKit's `keyUp:`, one for each key that went down,
-    /// however many repeats it sent between. Delivered whether the press
-    /// was consumed or interpreted, and never interpreted itself. Nothing
+    /// A key came up: AppKit's `keyUp:`, one for each key that went down
+    /// while the view was first responder, however many repeats it sent
+    /// between, except with Command held (below). Delivered whether the
+    /// press was consumed or interpreted, and never interpreted itself, and
+    /// the view does not pass a release on to the next responder. Nothing
     /// by default, so a responder that wants presses alone need not know
     /// releases exist.
     ///

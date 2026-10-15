@@ -148,7 +148,8 @@ test = true
 # The view's event selectors, sent on the main thread. `harness = false`
 # because libtest runs every test on a worker thread, where no
 # `MainThreadMarker` can be had and an `NSView` cannot be made; this
-# target's `main` is the process's main thread.
+# target's `main` is the process's main thread. A libtest filter, `--list`
+# or nextest has no effect on it: `main` runs all three checks.
 [[test]]
 name = "drawable_events"
 required-features = ["drawable"]
