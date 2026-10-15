@@ -84,8 +84,11 @@ impl Modifiers {
     }
 }
 
-/// A modifier key, told apart by side.
+/// A modifier key, told apart by side. `#[non_exhaustive]` so that a key
+/// this crate does not name yet, such as Globe, can be added without a
+/// major bump.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum ModifierKey {
     /// The left Shift key.
     LeftShift,
@@ -166,8 +169,10 @@ impl ModifierKey {
 }
 
 /// A modifier key went down or came up on its own: AppKit's
-/// `flagsChanged:`.
+/// `flagsChanged:`. `#[non_exhaustive]` so that a field, such as the Caps
+/// Lock state [`Modifiers`] cannot take, can be added without a major bump.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub struct ModifierChange {
     /// The hardware key code of the key that changed, `NSEvent.keyCode`.
     pub key_code: u16,
