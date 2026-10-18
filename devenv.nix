@@ -211,8 +211,8 @@ in
     "test:features" = {
       exec = ''
         set -eu
-        for f in "" "window" "glass" "icon-style" "window,glass" \
-                 "icon-style,private-spi" "window,glass,icon-style" \
+        for f in "" "window" "glass" "material" "icon-style" "window,glass" \
+                 "window,material" "icon-style,private-spi" "window,glass,icon-style" \
                  "window,glass,icon-style,private-spi"; do
           echo "--- features: ''${f:-<none>}"
           if [ -z "$f" ]; then
@@ -231,7 +231,7 @@ in
     "test:docs" = {
       exec = ''
         set -eu
-        for f in "" "window" "glass" "icon-style" "window,glass,icon-style,private-spi"; do
+        for f in "" "window" "glass" "material" "icon-style" "window,glass,icon-style,private-spi"; do
           echo "--- doc: ''${f:-<none>}"
           if [ -z "$f" ]; then
             RUSTDOCFLAGS='-D warnings' cargo doc --quiet --no-deps --lib --no-default-features

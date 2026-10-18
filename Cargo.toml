@@ -46,9 +46,12 @@ all-features = true
 [features]
 # `glass` is listed explicitly rather than implied by `window` — see the note
 # on `window` below.
-default = ["window", "glass", "icon-style"]
+default = ["window", "glass", "material", "icon-style"]
 # The NSGlassEffectView surface and its runtime availability guard.
 glass = []
+# The NSVisualEffectView surface for the standard materials, which Apple
+# puts behind app content where Liquid Glass belongs to controls.
+material = []
 # The borderless, transparent, shadowed window that hosts a glass surface.
 #
 # Deliberately does NOT imply `glass`: adding a feature edge later is
@@ -130,6 +133,15 @@ missing_docs = "warn"
 # visual checks, but nobody should `cargo install` them. `cargo test` compiles
 # both, so neither can silently rot. They share `examples/common/` and differ
 # only in which `GlassWindow` constructor they call.
+# AppKit views are main-thread-only, and the test harness runs each test on
+# a thread of its own. Without the harness, `main` is the process's main
+# thread, so the surface is built against the real class -- headless, with
+# no window and no application.
+[[test]]
+name = "material"
+harness = false
+required-features = ["material"]
+
 [[example]]
 name = "titled"
 required-features = ["window", "glass", "icon-style"]

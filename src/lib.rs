@@ -18,6 +18,7 @@
 //! | feature | default | what it brings |
 //! |---|---|---|
 //! | `glass` | yes | the `glass::GlassSurface` wrapper and its availability guard |
+//! | `material` | yes | the `material::MaterialSurface` wrapper over `NSVisualEffectView`'s standard materials |
 //! | `window` | yes | a transparent window hosting one glass surface, titled or borderless |
 //! | `icon-style` | yes | the Icon & widget style tracker — usable on its own |
 //! | `private-spi` | **no** | two undocumented selectors; see below |
@@ -177,6 +178,8 @@ pub mod drawable;
 pub mod glass;
 #[cfg(all(target_os = "macos", feature = "icon-style"))]
 pub mod icon_style;
+#[cfg(all(target_os = "macos", feature = "material"))]
+pub mod material;
 #[cfg(target_os = "macos")]
 pub mod menu;
 #[cfg(all(target_os = "macos", feature = "window"))]
