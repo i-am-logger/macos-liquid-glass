@@ -118,11 +118,35 @@ where one third does nothing.
 borderless one, and is the surface every measurement in `MEASUREMENTS.md`
 was taken against.
 
+### A standard material behind text
+
+Apple puts Liquid Glass on controls and a *standard* material behind an app's
+content: "Don't use Liquid Glass in the content layer", and "use Standard
+materials for elements in the content layer, such as app backgrounds" (HIG,
+[Materials](https://developer.apple.com/design/human-interface-guidelines/materials)).
+`MaterialSurface` is that material, an `NSVisualEffectView` blending behind the
+window, installed the same way a glass surface is:
+
+```rust
+use macos_liquid_glass::material::{Material, MaterialSurface};
+
+let body = MaterialSurface::new(mtm, frame, Material::UnderWindowBackground);
+window.set_content_view(body.view());
+body.set_content_view(&my_text_view);
+```
+
+`Material` is named for each material's use, as Apple asks: the see-through
+`UnderWindowBackground`, "a sense of peeking through the back of the window",
+and the opaque `WindowBackground` and `ContentBackground`, among others. The
+surface follows the window's active state, so an inactive window looks subdued
+the way the HIG's *Windows* page describes.
+
 ### Features
 
 | feature | default | what it brings |
 |---|---|---|
 | `glass` | yes | the `NSGlassEffectView` surface and its runtime availability guard |
+| `material` | yes | an `NSVisualEffectView` surface for Apple's standard materials, the ones it puts behind app content |
 | `window` | yes | a transparent window hosting one glass surface, titled or borderless |
 | `icon-style` | yes | the Icon & widget style tracker — **usable on its own** |
 | `private-spi` | **no** | one undocumented AppKit selector and the two private-class getters it reaches — see below |
