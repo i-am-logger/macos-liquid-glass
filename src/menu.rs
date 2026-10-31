@@ -1,6 +1,8 @@
-//! The application's main menu: the three menus every macOS app carries,
-//! wired to the standard responder-chain actions, so `Cmd-Q` quits, `Cmd-W`
-//! closes the window, `Cmd-M` minimises, and `Cmd-C`/`Cmd-V` reach the
+//! The application's main menu: the menus every macOS app carries, wired
+//! to the standard responder-chain actions, so `Cmd-Q` quits, `Cmd-N` sends
+//! `newWindow:` (which [`crate::app::AppDelegate`] answers, with or without
+//! a window open), `Cmd-W` closes the window, `Cmd-M` minimises, and
+//! `Cmd-C`/`Cmd-V` reach the
 //! first responder's `copy:` and `paste:` -- which `DrawableView` forwards to
 //! its `Responder::command`. Both are behind the `drawable` feature, so these
 //! are named rather than linked: this module is not gated on it, and an
@@ -60,10 +62,17 @@ fn cmd(title: impl Into<String>, action: Sel, key: &'static str) -> Option<Item>
 }
 
 /// Install the standard main menu for an app called `name`: the app menu
-/// (hide, hide others, show all, quit), Edit (copy, paste), View (bigger,
-/// smaller, actual size, as `zoomIn:`, `zoomOut:` and `zoomActual:` on the
-/// responder chain) and Window (minimize, zoom, close), the last also
-/// registered as the windows menu.
+/// (hide, hide others, show all, quit), File (new window, close), Edit
+/// (copy, paste), View (bigger, smaller, actual size, as `zoomIn:`,
+/// `zoomOut:` and `zoomActual:` on the responder chain) and Window
+/// (minimize, zoom), the last also registered as the windows menu.
+///
+/// Close is the File menu's, as the HIG's menu bar has it: "The Window
+/// menu doesn't help people customize the appearance of windows or close
+/// them ... to close a window, people choose Close in the File menu". New
+/// Window is enabled only while a responder answers `newWindow:` -- the
+/// delegate [`crate::app::AppDelegate`] installs -- so an app without one
+/// shows it disabled.
 pub fn install_main_menu(app: &NSApplication, mtm: MainThreadMarker, name: &str) {
     let app_menu = menu(
         mtm,
@@ -79,6 +88,15 @@ pub fn install_main_menu(app: &NSApplication, mtm: MainThreadMarker, name: &str)
             cmd("Show All", sel!(unhideAllApplications:), ""),
             None,
             cmd(format!("Quit {name}"), sel!(terminate:), "q"),
+        ],
+    );
+    let file = menu(
+        mtm,
+        "File",
+        &[
+            cmd("New Window", sel!(newWindow:), "n"),
+            None,
+            cmd("Close", sel!(performClose:), "w"),
         ],
     );
     let edit = menu(
@@ -106,12 +124,10 @@ pub fn install_main_menu(app: &NSApplication, mtm: MainThreadMarker, name: &str)
         &[
             cmd("Minimize", sel!(performMiniaturize:), "m"),
             cmd("Zoom", sel!(performZoom:), ""),
-            None,
-            cmd("Close", sel!(performClose:), "w"),
         ],
     );
     let bar = NSMenu::new(mtm);
-    for sub in [&app_menu, &edit, &view, &window] {
+    for sub in [&app_menu, &file, &edit, &view, &window] {
         let holder = NSMenuItem::new(mtm);
         holder.setSubmenu(Some(sub));
         bar.addItem(&holder);

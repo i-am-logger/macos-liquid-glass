@@ -142,6 +142,10 @@ name = "material"
 harness = false
 required-features = ["material"]
 
+[[test]]
+name = "app_delegate"
+harness = false
+
 [[example]]
 name = "titled"
 required-features = ["window", "glass", "icon-style"]
