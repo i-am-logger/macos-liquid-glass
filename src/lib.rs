@@ -123,7 +123,8 @@
 //! `icon_style::StyleObserver::new`.
 //!
 //! [`accessibility`] is the exception, and reads `NSWorkspace`, which is not
-//! main-thread-only.
+//! main-thread-only. Its `dim_flashing_lights` calls MediaAccessibility
+//! instead, whose header states no thread requirement either way.
 //!
 //! # Platform
 //!
@@ -172,6 +173,8 @@ pub use {objc2, objc2_app_kit, objc2_core_foundation, objc2_foundation};
 
 #[cfg(target_os = "macos")]
 pub mod accessibility;
+#[cfg(target_os = "macos")]
+pub mod app;
 #[cfg(all(target_os = "macos", feature = "drawable"))]
 pub mod drawable;
 #[cfg(all(target_os = "macos", feature = "glass"))]

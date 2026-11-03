@@ -142,6 +142,10 @@ name = "material"
 harness = false
 required-features = ["material"]
 
+[[test]]
+name = "app_delegate"
+harness = false
+
 [[example]]
 name = "titled"
 required-features = ["window", "glass", "icon-style"]
@@ -156,3 +160,13 @@ required-features = ["window", "glass", "icon-style"]
 # `cargo test --example borderless`, so the gap is invisible locally, but never
 # run under the bare `cargo test` that `dev-ci` and CI both use.
 test = true
+
+# The view's event selectors, sent on the main thread. `harness = false`
+# because libtest runs every test on a worker thread, where no
+# `MainThreadMarker` can be had and an `NSView` cannot be made; this
+# target's `main` is the process's main thread. A libtest filter, `--list`
+# or nextest has no effect on it: `main` runs all three checks.
+[[test]]
+name = "drawable_events"
+required-features = ["drawable"]
+harness = false
