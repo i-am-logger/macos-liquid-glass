@@ -123,7 +123,8 @@
 //! `icon_style::StyleObserver::new`.
 //!
 //! [`accessibility`] is the exception, and reads `NSWorkspace`, which is not
-//! main-thread-only.
+//! main-thread-only. Its `dim_flashing_lights` calls MediaAccessibility
+//! instead, whose header states no thread requirement either way.
 //!
 //! # Platform
 //!

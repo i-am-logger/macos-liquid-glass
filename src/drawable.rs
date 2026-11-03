@@ -27,7 +27,11 @@
 //! input manager and comes back as [`Responder::text`] (including dead
 //! keys and an IME commit) or [`Responder::command`] (a selector such as
 //! `deleteBackward:`). The view is an `NSTextInputClient`, so the
-//! candidate window lands where [`Responder::cursor_rect`] says.
+//! candidate window lands where [`Responder::cursor_rect`] says. A key's
+//! release goes to [`Responder::key_released`] and nowhere else: the input
+//! manager has no use for it. So does a modifier key pressed or released
+//! on its own, to [`Responder::modifiers_changed`]. The click that
+//! brings an inactive window forward reaches [`Responder::mouse`] too.
 
 use core::ptr::NonNull;
 use std::cell::{Cell, RefCell};
@@ -80,7 +84,124 @@ impl Modifiers {
     }
 }
 
-/// A key press as AppKit delivered it, before interpretation.
+/// A modifier key, told apart by side. `#[non_exhaustive]` so that a key
+/// this crate does not name yet, such as Globe, can be added without a
+/// major bump.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+pub enum ModifierKey {
+    /// The left Shift key.
+    LeftShift,
+    /// The right Shift key.
+    RightShift,
+    /// The left Control key.
+    LeftControl,
+    /// The right Control key.
+    RightControl,
+    /// The left Option key.
+    LeftOption,
+    /// The right Option key.
+    RightOption,
+    /// The left Command key.
+    LeftCommand,
+    /// The right Command key.
+    RightCommand,
+    /// The `fn` key.
+    Function,
+    /// Caps Lock.
+    CapsLock,
+}
+
+impl ModifierKey {
+    /// The modifier key a hardware key code names: the `kVK_` constants
+    /// of HIToolbox's `Events.h`.
+    fn of(key_code: u16) -> Option<ModifierKey> {
+        Some(match key_code {
+            0x38 => ModifierKey::LeftShift,
+            0x3C => ModifierKey::RightShift,
+            0x3B => ModifierKey::LeftControl,
+            0x3E => ModifierKey::RightControl,
+            0x3A => ModifierKey::LeftOption,
+            0x3D => ModifierKey::RightOption,
+            0x37 => ModifierKey::LeftCommand,
+            0x36 => ModifierKey::RightCommand,
+            0x3F => ModifierKey::Function,
+            0x39 => ModifierKey::CapsLock,
+            _ => return None,
+        })
+    }
+
+    /// Whether this key is down in `flags`.
+    ///
+    /// The device-independent flags cannot say: with both Command keys
+    /// held, releasing one leaves `Command` set. Below
+    /// `NSEventModifierFlagDeviceIndependentFlagsMask` AppKit carries a bit
+    /// for each side, IOKit's `NX_DEVICE*KEYMASK` in `IOLLEvent.h`, and
+    /// those say which. An event with neither side's bit -- one a program
+    /// made rather than a keyboard -- falls back to the shared flag.
+    fn is_down(self, flags: NSEventModifierFlags) -> bool {
+        const L_CTL: NSUInteger = 0x0000_0001;
+        const L_SHIFT: NSUInteger = 0x0000_0002;
+        const R_SHIFT: NSUInteger = 0x0000_0004;
+        const L_CMD: NSUInteger = 0x0000_0008;
+        const R_CMD: NSUInteger = 0x0000_0010;
+        const L_ALT: NSUInteger = 0x0000_0020;
+        const R_ALT: NSUInteger = 0x0000_0040;
+        const R_CTL: NSUInteger = 0x0000_2000;
+        let (own, pair, shared) = match self {
+            ModifierKey::LeftShift => (L_SHIFT, L_SHIFT | R_SHIFT, NSEventModifierFlags::Shift),
+            ModifierKey::RightShift => (R_SHIFT, L_SHIFT | R_SHIFT, NSEventModifierFlags::Shift),
+            ModifierKey::LeftControl => (L_CTL, L_CTL | R_CTL, NSEventModifierFlags::Control),
+            ModifierKey::RightControl => (R_CTL, L_CTL | R_CTL, NSEventModifierFlags::Control),
+            ModifierKey::LeftOption => (L_ALT, L_ALT | R_ALT, NSEventModifierFlags::Option),
+            ModifierKey::RightOption => (R_ALT, L_ALT | R_ALT, NSEventModifierFlags::Option),
+            ModifierKey::LeftCommand => (L_CMD, L_CMD | R_CMD, NSEventModifierFlags::Command),
+            ModifierKey::RightCommand => (R_CMD, L_CMD | R_CMD, NSEventModifierFlags::Command),
+            ModifierKey::Function => return flags.contains(NSEventModifierFlags::Function),
+            ModifierKey::CapsLock => return flags.contains(NSEventModifierFlags::CapsLock),
+        };
+        if flags.0 & pair != 0 {
+            flags.0 & own != 0
+        } else {
+            flags.contains(shared)
+        }
+    }
+}
+
+/// A modifier key went down or came up on its own: AppKit's
+/// `flagsChanged:`. `#[non_exhaustive]` so that a field, such as the Caps
+/// Lock state [`Modifiers`] cannot take, can be added without a major bump.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+pub struct ModifierChange {
+    /// The hardware key code of the key that changed, `NSEvent.keyCode`.
+    pub key_code: u16,
+    /// Which modifier key that is; `None` for a code this crate does not
+    /// name.
+    pub key: Option<ModifierKey>,
+    /// Whether `key` is down now; `false` when `key` is `None`. For Caps
+    /// Lock it is whether `NSEventModifierFlagCapsLock` is set after the
+    /// change, which is not measured on a hardware keyboard.
+    pub pressed: bool,
+    /// The modifiers held after the change.
+    pub modifiers: Modifiers,
+}
+
+impl ModifierChange {
+    /// The change a `flagsChanged:` event's key code and flags describe.
+    fn of(key_code: u16, flags: NSEventModifierFlags) -> ModifierChange {
+        let key = ModifierKey::of(key_code);
+        ModifierChange {
+            key_code,
+            key,
+            pressed: key.is_some_and(|k| k.is_down(flags)),
+            modifiers: Modifiers::of(flags),
+        }
+    }
+}
+
+/// A key press as AppKit delivered it, before interpretation; the same
+/// fields describe its release, which [`Responder::key_released`] receives.
 #[derive(Clone, Debug)]
 pub struct KeyPress {
     /// The hardware key code, `NSEvent.keyCode`.
@@ -91,8 +212,29 @@ pub struct KeyPress {
     pub unmodified: String,
     /// The modifiers held.
     pub modifiers: Modifiers,
-    /// A key-repeat rather than a fresh press.
+    /// A key-repeat rather than a fresh press; `false` for the releases
+    /// AppKit sends.
     pub repeat: bool,
+}
+
+impl KeyPress {
+    /// The fields of a `keyDown:` or `keyUp:` event. Only those two:
+    /// `characters` raises on any other kind of event.
+    fn of(event: &NSEvent) -> KeyPress {
+        KeyPress {
+            key_code: event.keyCode(),
+            characters: event
+                .characters()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            unmodified: event
+                .charactersIgnoringModifiers()
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            modifiers: Modifiers::of(event.modifierFlags()),
+            repeat: event.isARepeat(),
+        }
+    }
 }
 
 /// What a responder did with a key press.
@@ -213,6 +355,33 @@ pub trait Responder {
     /// A key went down. Answer [`Handled::Interpret`] to let the input
     /// manager turn it into text or a command.
     fn key(&mut self, key: &KeyPress) -> Handled;
+    /// A key came up: AppKit's `keyUp:`, one for each key that went down
+    /// while the view was first responder, however many repeats it sent
+    /// between, except with Command held (below). Delivered whether the
+    /// press was consumed or interpreted, and never interpreted itself, and
+    /// the view does not pass a release on to the next responder. Nothing
+    /// by default, so a responder that wants presses alone need not know
+    /// releases exist.
+    ///
+    /// The view hears only the releases the application forwards to it,
+    /// and `-[NSApplication sendEvent:]` keeps a key-up to itself while
+    /// Command is held: measured, a Command-`a` sent through it reaches
+    /// [`Responder::key`] going down and never reaches this coming up,
+    /// where a plain `a` reaches both. This crate does not own the
+    /// application object, so a release with Command held does not arrive
+    /// here; `MEASUREMENTS.md` in the repository has the method.
+    fn key_released(&mut self, key: &KeyPress) {
+        let _ = key;
+    }
+    /// A modifier key went down or came up on its own: AppKit's
+    /// `flagsChanged:`. A terminal that reports modifier keys as keys
+    /// (kitty's "report all keys as escape codes") reads `key` and
+    /// `pressed`; a host that follows Command -- a link lit under the
+    /// pointer while it is held -- reads `modifiers`. Never interpreted,
+    /// and nothing by default.
+    fn modifiers_changed(&mut self, change: &ModifierChange) {
+        let _ = change;
+    }
     /// Text the input manager produced: a typed character, a dead-key
     /// composition, an IME commit.
     fn text(&mut self, text: &str);
@@ -381,6 +550,15 @@ define_class!(
             true
         }
 
+        /// Click-through: the click that brings an inactive window forward
+        /// also reaches `mouseDown:`, rather than only activating the
+        /// window as AppKit's default `NO` does. Whatever the event, which
+        /// AppKit may pass as nil.
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
+            true
+        }
+
         /// The layer is ours and stays non-opaque: an opaque layer here
         /// paints the glass out.
         #[unsafe(method_id(makeBackingLayer))]
@@ -455,16 +633,7 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            let press = KeyPress {
-                key_code: event.keyCode(),
-                characters: event.characters().map(|s| s.to_string()).unwrap_or_default(),
-                unmodified: event
-                    .charactersIgnoringModifiers()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-                modifiers: Modifiers::of(event.modifierFlags()),
-                repeat: event.isARepeat(),
-            };
+            let press = KeyPress::of(event);
             let handled = self
                 .with_responder(|r| r.key(&press))
                 .unwrap_or(Handled::Interpret);
@@ -474,8 +643,22 @@ define_class!(
             }
         }
 
+        /// A key came up. The responder alone hears it: the input manager
+        /// interprets presses, and a release is not one.
+        #[unsafe(method(keyUp:))]
+        fn key_up(&self, event: &NSEvent) {
+            let release = KeyPress::of(event);
+            self.with_responder(|r| r.key_released(&release));
+        }
+
+        /// A modifier key went down or came up. Only `keyCode` and
+        /// `modifierFlags` are read: `characters` raises on this kind of
+        /// event.
         #[unsafe(method(flagsChanged:))]
-        fn flags_changed(&self, _event: &NSEvent) {}
+        fn flags_changed(&self, event: &NSEvent) {
+            let change = ModifierChange::of(event.keyCode(), event.modifierFlags());
+            self.with_responder(|r| r.modifiers_changed(&change));
+        }
 
         // The Edit menu's actions, sent down the responder chain by a key
         // equivalent or a click on the item: the responder gets them as the
@@ -1019,7 +1202,85 @@ impl Surface {
 
 #[cfg(test)]
 mod tests {
-    use super::Surface;
+    use super::{ModifierChange, ModifierKey, Surface};
+    use objc2_app_kit::NSEventModifierFlags as F;
+    use objc2_foundation::NSUInteger;
+
+    /// Each side-specific modifier: its key code, the `NX_DEVICE*KEYMASK`
+    /// bit for it and for its other side, and the shared flag.
+    const SIDED: [(u16, ModifierKey, NSUInteger, NSUInteger, F); 8] = [
+        (0x38, ModifierKey::LeftShift, 0x02, 0x04, F::Shift),
+        (0x3C, ModifierKey::RightShift, 0x04, 0x02, F::Shift),
+        (0x3B, ModifierKey::LeftControl, 0x01, 0x2000, F::Control),
+        (0x3E, ModifierKey::RightControl, 0x2000, 0x01, F::Control),
+        (0x3A, ModifierKey::LeftOption, 0x20, 0x40, F::Option),
+        (0x3D, ModifierKey::RightOption, 0x40, 0x20, F::Option),
+        (0x37, ModifierKey::LeftCommand, 0x08, 0x10, F::Command),
+        (0x36, ModifierKey::RightCommand, 0x10, 0x08, F::Command),
+    ];
+
+    /// A key going down alone reads as that key pressed, and coming up
+    /// as released.
+    #[test]
+    fn a_modifier_alone_reads_as_pressed_then_released() {
+        for (code, key, own, _, shared) in SIDED {
+            let down = ModifierChange::of(code, F(shared.0 | own));
+            assert_eq!((down.key, down.pressed), (Some(key), true), "{key:?}");
+            let up = ModifierChange::of(code, F::empty());
+            assert_eq!((up.key, up.pressed), (Some(key), false), "{key:?}");
+            assert_eq!(up.modifiers, Default::default(), "{key:?}");
+        }
+    }
+
+    /// **Both sides held, one released**: the shared flag stays set, so
+    /// only the side's own bit can say the released key is up -- and that
+    /// the other side is still down.
+    #[test]
+    fn releasing_one_side_while_the_other_is_held_reads_as_released() {
+        for (code, key, own, other, shared) in SIDED {
+            let up = ModifierChange::of(code, F(shared.0 | other));
+            assert!(!up.pressed, "{key:?} read as down after its release");
+            let down = ModifierChange::of(code, F(shared.0 | own | other));
+            assert!(down.pressed, "{key:?} read as up with both sides held");
+        }
+        let held = ModifierChange::of(0x37, F(F::Command.0 | 0x10));
+        assert!(
+            held.modifiers.command,
+            "the other Command key still holds it"
+        );
+    }
+
+    /// An event with no side bits -- one a program made -- falls back to
+    /// the shared flag rather than reading every key as up.
+    #[test]
+    fn without_side_bits_the_shared_flag_decides() {
+        for (code, key, _, _, shared) in SIDED {
+            assert!(ModifierChange::of(code, shared).pressed, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn caps_lock_and_fn_read_their_own_flags() {
+        let on = ModifierChange::of(0x39, F::CapsLock);
+        assert_eq!((on.key, on.pressed), (Some(ModifierKey::CapsLock), true));
+        assert!(!ModifierChange::of(0x39, F::empty()).pressed);
+        let fn_down = ModifierChange::of(0x3F, F::Function);
+        assert_eq!(
+            (fn_down.key, fn_down.pressed),
+            (Some(ModifierKey::Function), true)
+        );
+        assert!(fn_down.modifiers.function);
+        assert!(!ModifierChange::of(0x3F, F::empty()).pressed);
+    }
+
+    /// A code this crate does not name still carries the modifiers, so a
+    /// host following Command loses nothing.
+    #[test]
+    fn an_unnamed_key_code_carries_the_modifiers_and_no_key() {
+        let c = ModifierChange::of(0x00, F::Command);
+        assert_eq!((c.key, c.pressed), (None, false));
+        assert!(c.modifiers.command);
+    }
 
     #[test]
     fn a_surface_takes_pixels_and_reports_its_stride() {
