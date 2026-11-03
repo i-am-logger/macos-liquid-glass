@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.7](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.6...v1.0.0-beta.7) - 2026-11-03
+
+### Docs
+
+- key releases, Caps Lock and the 13.3 lookup say what they do
+
+### Feat
+
+- a key release reaches the responder
+- a modifier key alone reaches the responder
+- the first click into an inactive window reaches the view
+- dim_flashing_lights, read at run time beside reduce_motion
+- ModifierKey and ModifierChange are non_exhaustive
+- an app delegate for more than one window, and a File menu
+
+### Changed behaviour
+
+- `acceptsFirstMouse:` now returns YES, so the click that activates an inactive window reaches `Responder::mouse`; AppKit's default drops it.
+- Close (Command-W) moves from the Window menu to a new File menu, beside New Window (Command-N), which is disabled unless the app installs `AppDelegate`.
+
 ## [1.0.0-beta.6](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.5...v1.0.0-beta.6) - 2026-10-18
 
 ### Feat
