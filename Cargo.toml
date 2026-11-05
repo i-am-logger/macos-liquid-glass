@@ -146,6 +146,12 @@ required-features = ["material"]
 name = "app_delegate"
 harness = false
 
+# A real NSWindow, built and laid out but never ordered in.
+[[test]]
+name = "titlebar_accessory"
+harness = false
+required-features = ["window"]
+
 [[example]]
 name = "titled"
 required-features = ["window", "glass", "icon-style"]

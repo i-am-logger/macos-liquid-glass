@@ -19,10 +19,38 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSBackingStoreType, NSColor, NSView, NSWindow,
-    NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility,
+    NSAppearance, NSAppearanceCustomization, NSBackingStoreType, NSColor, NSLayoutAttribute,
+    NSTitlebarAccessoryViewController, NSView, NSWindow, NSWindowStyleMask, NSWindowTabbingMode,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
+
+/// Which end of the titlebar an accessory sits at — see
+/// [`GlassWindow::add_titlebar_accessory`].
+///
+/// Leading and trailing rather than left and right: AppKit flips them for a
+/// right-to-left localisation, so a caller written for one reading direction is
+/// laid out correctly in the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TitlebarSide {
+    /// Beside the traffic lights: "adjacent and to the right of the
+    /// close/minimize/maximize buttons" in a left-to-right layout
+    /// (`NSTitlebarAccessoryViewController.h`).
+    Leading,
+    /// The far end of the titlebar, flush with the window's edge.
+    Trailing,
+}
+
+impl TitlebarSide {
+    /// The `layoutAttribute` AppKit places the accessory by.
+    fn layout_attribute(self) -> NSLayoutAttribute {
+        match self {
+            Self::Leading => NSLayoutAttribute::Leading,
+            Self::Trailing => NSLayoutAttribute::Trailing,
+        }
+    }
+}
 
 /// Which window shape was built. Internal — callers choose by constructor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -545,6 +573,85 @@ impl GlassWindow {
     pub fn ns_window(&self) -> &NSWindow {
         &self.window
     }
+
+    /// Put `view` in the titlebar, at `side`, as an
+    /// `NSTitlebarAccessoryViewController`.
+    ///
+    /// This is AppKit's own place for custom titlebar content, and the reason
+    /// to use it over a subview of the content view is full screen. There, in
+    /// `NSApplication.h`'s words, the "fullscreen window toolbar is detached
+    /// from window and hides/shows on rollover". The accessory is laid out in
+    /// the same titlebar container as the traffic lights, so it goes where they
+    /// go and is shown when they are. A content subview stays in the window,
+    /// under a titlebar that has left it.
+    ///
+    /// That full-screen behaviour is AppKit's and is not measured here: a
+    /// window cannot enter full screen without being shown. Whether the
+    /// detached titlebar hides at all follows the user's menu-bar setting for
+    /// full screen.
+    ///
+    /// Measured on macOS 27.0, with this crate's titled window:
+    ///
+    /// - **The content area does not move.** `contentLayoutRect` is the same
+    ///   before and after; the accessory sits in the titlebar's own height.
+    /// - **Leading** starts one button-gap after the zoom button: at
+    ///   `zoom.maxX` plus the close-to-minimise gap.
+    /// - **Trailing** is flush with the window's trailing edge. Any inset is the
+    ///   view's own, so a view that wants padding is that much wider.
+    /// - **The width is the view's.** AppKit keeps its frame width and sets its
+    ///   height to the titlebar's. To resize it later, change the width and
+    ///   keep the height: `view.setFrameSize(NSSize::new(width,
+    ///   view.frame().size.height))`. The accessory stays on its side.
+    /// - **Nothing stops an overlap.** In a narrow window AppKit lets the two
+    ///   sides run into each other and into the traffic lights, so size the
+    ///   views to the window, or [`set_min_size`] to one they fit.
+    ///
+    /// The window keeps the controller, so dropping the returned handle does
+    /// not remove the accessory. `removeFromParentViewController` on it does.
+    ///
+    /// # Panics
+    ///
+    /// If the window is [`borderless`]. It has no titlebar, and AppKit raises
+    /// on the add, which aborts the process without saying why; the assertion
+    /// says it first.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "window")] {
+    /// use macos_liquid_glass::objc2::MainThreadOnly;
+    /// use macos_liquid_glass::objc2_app_kit::NSView;
+    /// use macos_liquid_glass::objc2_foundation::{MainThreadMarker, NSRect, NSSize};
+    /// use macos_liquid_glass::window::{GlassWindow, TitlebarSide};
+    ///
+    /// let mtm = MainThreadMarker::new().expect("main thread");
+    /// let window = GlassWindow::new(mtm, NSSize::new(960.0, 600.0), "example");
+    /// let logo = NSView::initWithFrame(
+    ///     NSView::alloc(mtm),
+    ///     NSRect::new(Default::default(), NSSize::new(90.0, 28.0)),
+    /// );
+    /// let _accessory = window.add_titlebar_accessory(&logo, TitlebarSide::Leading);
+    /// window.show();
+    /// # }
+    /// ```
+    ///
+    /// [`borderless`]: GlassWindow::borderless
+    /// [`set_min_size`]: GlassWindow::set_min_size
+    pub fn add_titlebar_accessory(
+        &self,
+        view: &NSView,
+        side: TitlebarSide,
+    ) -> Retained<NSTitlebarAccessoryViewController> {
+        assert!(
+            !self.is_borderless(),
+            "GlassWindow::add_titlebar_accessory: a borderless window has no titlebar to put an accessory in"
+        );
+        let accessory = NSTitlebarAccessoryViewController::new(self.mtm());
+        accessory.setLayoutAttribute(side.layout_attribute());
+        accessory.setView(view);
+        self.window.addTitlebarAccessoryViewController(&accessory);
+        accessory
+    }
 }
 
 #[cfg(feature = "icon-style")]
@@ -636,5 +743,20 @@ mod tests {
     #[test]
     fn titled_is_the_default_chrome() {
         assert_eq!(Chrome::default(), Chrome::Titled);
+    }
+
+    /// Leading and trailing, not left and right, so AppKit flips them for a
+    /// right-to-left localisation; and never the default, Bottom, which would
+    /// put the view under the titlebar instead of in it.
+    #[test]
+    fn titlebar_sides_map_to_the_flipping_attributes() {
+        assert_eq!(
+            TitlebarSide::Leading.layout_attribute(),
+            NSLayoutAttribute::Leading
+        );
+        assert_eq!(
+            TitlebarSide::Trailing.layout_attribute(),
+            NSLayoutAttribute::Trailing
+        );
     }
 }
