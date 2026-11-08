@@ -32,9 +32,45 @@
 //! manager has no use for it. So does a modifier key pressed or released
 //! on its own, to [`Responder::modifiers_changed`]. The click that
 //! brings an inactive window forward reaches [`Responder::mouse`] too.
+//!
+//! # Re-entrancy
+//!
+//! A responder call can run the run loop: any synchronous AppKit call with
+//! a loop of its own does -- `-[NSWorkspace activateFileViewerSelectingURLs:]`,
+//! a modal panel, an `NSAlert`. That loop delivers whatever was queued for
+//! the view while the responder is still inside its call. None of it
+//! reaches the responder until that call returns:
+//!
+//! - a [`Waker::wake`] is held, and several are folded into one
+//!   [`Responder::wake`];
+//! - a [`Waker::present`] puts its surface on the layer at once, as it
+//!   always does, and its [`Responder::presented`] is held, one for each
+//!   present, so none is lost -- later than the commit it reports, by the
+//!   length of the outer call;
+//! - a display-link tick is skipped: the frame in progress is that frame,
+//!   and the next tick draws;
+//! - an input or view event (a key, a click, a resize, a focus change) is
+//!   held, in order, and delivered as it would have been;
+//! - [`DrawableView::set_responder`] from inside a call takes effect when
+//!   that call returns.
+//!
+//! What is held is delivered in that order -- events, then presents, then
+//! the wake -- after the outermost call returns and before the view
+//! returns to AppKit. A query that must answer at once,
+//! `firstRectForCharacterRange:` for the candidate window, answers with an
+//! empty rect while the responder is busy.
+//!
+//! A panic in a responder stops at the view: every method AppKit calls on
+//! it catches the panic, writes the selector to standard error, and returns
+//! what AppKit's own default would. Left to unwind, a panic in a perform
+//! reaches Foundation, which catches and discards it, and Rust then aborts
+//! the process. Under `panic = "abort"` the process aborts at the panic
+//! regardless; nothing here can change that.
 
 use core::ptr::NonNull;
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
@@ -411,6 +447,10 @@ pub trait Responder {
     /// [`Waker`]: bytes arrived, a frame completed. Delivered on the main
     /// thread. Nothing by default, so a responder that never hands out a
     /// waker need not know one exists.
+    ///
+    /// Wakes that arrive while the responder is inside another call (a
+    /// nested run loop) are held, folded into one, and delivered when that
+    /// call returns.
     fn wake(&mut self) {}
     /// A surface a [`Waker::present`] handed over is on the layer: the
     /// `CATransaction` that set it as the contents has just committed, on
@@ -419,6 +459,13 @@ pub trait Responder {
     /// as the process can see; a responder that times its frames stamps
     /// here rather than at the wake, which any other thread can also send.
     /// Nothing by default.
+    ///
+    /// Except while the responder is inside another call: a present that
+    /// lands during a nested run loop is on the layer at once, but this is
+    /// held until that call returns, one per present. A stamp taken then
+    /// is late by the length of the call, and several arrive back to back,
+    /// so a responder that times frames should not read those as frame
+    /// times.
     fn presented(&mut self) {}
 
     /// The view's effective appearance changed: a system light/dark flip,
@@ -528,6 +575,59 @@ pub struct DrawableIvars {
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
     marked: RefCell<String>,
     scale: Cell<CGFloat>,
+    /// What arrived while the responder was busy, in order.
+    held: RefCell<VecDeque<Held>>,
+    /// A wake arrived while the responder was busy; several fold into one.
+    wake_held: Cell<bool>,
+    /// Presents that arrived while the responder was busy, each owed its
+    /// own [`Responder::presented`].
+    presents_held: Cell<u32>,
+    /// A responder installed from inside a responder call.
+    replacement: RefCell<Option<Box<dyn Responder>>>,
+    /// Inside `drain`, which must not run inside itself.
+    draining: Cell<bool>,
+}
+
+/// A call to make on the responder once it is free.
+type HeldCall = Box<dyn FnOnce(&mut dyn Responder)>;
+
+/// An event held while the responder was busy.
+enum Held {
+    /// A call to make on the responder.
+    Call(HeldCall),
+    /// A key press, held whole: its answer decides whether the input
+    /// manager sees it, so it is replayed through `keyDown:` again.
+    KeyDown(Retained<NSEvent>),
+}
+
+/// The responder was inside a call of its own.
+struct Busy;
+
+/// Runs `f`, the body of a method AppKit calls on the view, and stops a
+/// panic there: one that unwinds into a Foundation perform is caught and
+/// discarded by Foundation, and Rust aborts the process. On a panic it
+/// writes the selector to standard error -- the panic hook has already
+/// written the message and where -- and returns `fallback()`.
+fn guarded<R>(selector: &str, fallback: impl FnOnce() -> R, f: impl FnOnce() -> R) -> R {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!(
+                "macos-liquid-glass: a panic in DrawableView `{selector}` stopped at the view"
+            );
+            fallback()
+        }
+    }
+}
+
+/// Clears `draining` however `drain` ends, a panic included, so one panic
+/// cannot leave everything after it held for good.
+struct Draining<'a>(&'a Cell<bool>);
+
+impl Drop for Draining<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
 }
 
 define_class!(
@@ -542,12 +642,12 @@ define_class!(
         /// Top-left origin, so a renderer's rows and AppKit's agree.
         #[unsafe(method(isFlipped))]
         fn is_flipped(&self) -> bool {
-            true
+            guarded("isFlipped", || true, || true)
         }
 
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_first_responder(&self) -> bool {
-            true
+            guarded("acceptsFirstResponder", || true, || true)
         }
 
         /// Click-through: the click that brings an inactive window forward
@@ -556,19 +656,21 @@ define_class!(
         /// AppKit may pass as nil.
         #[unsafe(method(acceptsFirstMouse:))]
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
-            true
+            guarded("acceptsFirstMouse:", || true, || true)
         }
 
         /// The layer is ours and stays non-opaque: an opaque layer here
         /// paints the glass out.
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<CALayer> {
-            let layer = CALayer::new();
-            layer.setOpaque(false);
-            // SAFETY: `kCAGravityTopLeft` is a QuartzCore constant string.
-            layer.setContentsGravity(unsafe { kCAGravityTopLeft });
-            layer.setContentsScale(self.ivars().scale.get());
-            layer
+            guarded("makeBackingLayer", CALayer::new, || {
+                let layer = CALayer::new();
+                layer.setOpaque(false);
+                // SAFETY: `kCAGravityTopLeft` is a QuartzCore constant string.
+                layer.setContentsGravity(unsafe { kCAGravityTopLeft });
+                layer.setContentsScale(self.ivars().scale.get());
+                layer
+            })
         }
 
         /// AppKit asks before `drawRect:`; answering yes and doing nothing
@@ -576,48 +678,63 @@ define_class!(
         /// drawn image.
         #[unsafe(method(wantsUpdateLayer))]
         fn wants_update_layer(&self) -> bool {
-            true
+            guarded("wantsUpdateLayer", || true, || true)
         }
 
         #[unsafe(method(updateLayer))]
-        fn update_layer(&self) {}
+        fn update_layer(&self) {
+            guarded("updateLayer", || (), || ());
+        }
 
         #[unsafe(method(viewDidChangeBackingProperties))]
         fn view_did_change_backing_properties(&self) {
-            let _: () = unsafe { msg_send![super(self), viewDidChangeBackingProperties] };
-            self.refresh_scale();
-            self.notify_resized();
+            guarded("viewDidChangeBackingProperties", || (), || {
+                let _: () = unsafe { msg_send![super(self), viewDidChangeBackingProperties] };
+                self.refresh_scale();
+                self.notify_resized();
+            });
         }
 
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
-            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            self.notify_resized();
+            guarded("setFrameSize:", || (), || {
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                self.notify_resized();
+            });
         }
 
         #[unsafe(method(viewDidChangeEffectiveAppearance))]
         fn view_did_change_effective_appearance(&self) {
-            let _: () = unsafe { msg_send![super(self), viewDidChangeEffectiveAppearance] };
-            let appearance = if crate::is_dark(&self.effectiveAppearance()) {
-                Appearance::Dark
-            } else {
-                Appearance::Light
-            };
-            self.with_responder(|r| r.appearance(appearance));
+            guarded("viewDidChangeEffectiveAppearance", || (), || {
+                let _: () = unsafe { msg_send![super(self), viewDidChangeEffectiveAppearance] };
+                let appearance = if crate::is_dark(&self.effectiveAppearance()) {
+                    Appearance::Dark
+                } else {
+                    Appearance::Light
+                };
+                self.deliver(move |r| r.appearance(appearance));
+            });
         }
 
         #[unsafe(method(viewDidMoveToWindow))]
         fn view_did_move_to_window(&self) {
-            let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
-            self.refresh_scale();
-            self.notify_resized();
+            guarded("viewDidMoveToWindow", || (), || {
+                let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
+                self.refresh_scale();
+                self.notify_resized();
+            });
         }
 
         #[unsafe(method(becomeFirstResponder))]
         fn become_first_responder(&self) -> bool {
+            // AppKit's answer stands whatever the responder does: only the
+            // delivery is guarded, so a panic in `focus` cannot make the
+            // view deny what AppKit already did.
             let ok: bool = unsafe { msg_send![super(self), becomeFirstResponder] };
             if ok {
-                self.with_responder(|r| r.focus(Focus::Gained));
+                guarded("becomeFirstResponder", || (), || {
+                    self.deliver(|r| r.focus(Focus::Gained));
+                });
             }
             ok
         }
@@ -626,29 +743,26 @@ define_class!(
         fn resign_first_responder(&self) -> bool {
             let ok: bool = unsafe { msg_send![super(self), resignFirstResponder] };
             if ok {
-                self.with_responder(|r| r.focus(Focus::Lost));
+                guarded("resignFirstResponder", || (), || {
+                    self.deliver(|r| r.focus(Focus::Lost));
+                });
             }
             ok
         }
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            let press = KeyPress::of(event);
-            let handled = self
-                .with_responder(|r| r.key(&press))
-                .unwrap_or(Handled::Interpret);
-            if handled == Handled::Interpret {
-                let events = NSArray::from_slice(&[event]);
-                self.interpretKeyEvents(&events);
-            }
+            guarded("keyDown:", || (), || self.press(event));
         }
 
         /// A key came up. The responder alone hears it: the input manager
         /// interprets presses, and a release is not one.
         #[unsafe(method(keyUp:))]
         fn key_up(&self, event: &NSEvent) {
-            let release = KeyPress::of(event);
-            self.with_responder(|r| r.key_released(&release));
+            guarded("keyUp:", || (), || {
+                let release = KeyPress::of(event);
+                self.deliver(move |r| r.key_released(&release));
+            });
         }
 
         /// A modifier key went down or came up. Only `keyCode` and
@@ -656,8 +770,10 @@ define_class!(
         /// event.
         #[unsafe(method(flagsChanged:))]
         fn flags_changed(&self, event: &NSEvent) {
-            let change = ModifierChange::of(event.keyCode(), event.modifierFlags());
-            self.with_responder(|r| r.modifiers_changed(&change));
+            guarded("flagsChanged:", || (), || {
+                let change = ModifierChange::of(event.keyCode(), event.modifierFlags());
+                self.deliver(move |r| r.modifiers_changed(&change));
+            });
         }
 
         // The Edit menu's actions, sent down the responder chain by a key
@@ -665,139 +781,159 @@ define_class!(
         // selector, the way the input manager's commands arrive.
         #[unsafe(method(copy:))]
         fn copy_(&self, _sender: Option<&AnyObject>) {
-            self.with_responder(|r| r.command("copy:"));
+            self.menu_command("copy:");
         }
 
         #[unsafe(method(paste:))]
         fn paste_(&self, _sender: Option<&AnyObject>) {
-            self.with_responder(|r| r.command("paste:"));
+            self.menu_command("paste:");
         }
 
         // The View menu's zoom actions, the same way.
         #[unsafe(method(zoomIn:))]
         fn zoom_in(&self, _sender: Option<&AnyObject>) {
-            self.with_responder(|r| r.command("zoomIn:"));
+            self.menu_command("zoomIn:");
         }
 
         #[unsafe(method(zoomOut:))]
         fn zoom_out(&self, _sender: Option<&AnyObject>) {
-            self.with_responder(|r| r.command("zoomOut:"));
+            self.menu_command("zoomOut:");
         }
 
         #[unsafe(method(zoomActual:))]
         fn zoom_actual(&self, _sender: Option<&AnyObject>) {
-            self.with_responder(|r| r.command("zoomActual:"));
+            self.menu_command("zoomActual:");
         }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Down);
+            self.forward_mouse("mouseDown:", event, MouseKind::Down);
         }
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Up);
+            self.forward_mouse("mouseUp:", event, MouseKind::Up);
         }
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Down);
+            self.forward_mouse("rightMouseDown:", event, MouseKind::Down);
         }
         #[unsafe(method(rightMouseUp:))]
         fn right_mouse_up(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Up);
+            self.forward_mouse("rightMouseUp:", event, MouseKind::Up);
         }
         #[unsafe(method(otherMouseDown:))]
         fn other_mouse_down(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Down);
+            self.forward_mouse("otherMouseDown:", event, MouseKind::Down);
         }
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Up);
+            self.forward_mouse("otherMouseUp:", event, MouseKind::Up);
         }
         #[unsafe(method(mouseMoved:))]
         fn mouse_moved(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Moved);
+            self.forward_mouse("mouseMoved:", event, MouseKind::Moved);
         }
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Dragged);
+            self.forward_mouse("mouseDragged:", event, MouseKind::Dragged);
         }
         #[unsafe(method(rightMouseDragged:))]
         fn right_mouse_dragged(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Dragged);
+            self.forward_mouse("rightMouseDragged:", event, MouseKind::Dragged);
         }
         #[unsafe(method(otherMouseDragged:))]
         fn other_mouse_dragged(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Dragged);
+            self.forward_mouse("otherMouseDragged:", event, MouseKind::Dragged);
         }
         #[unsafe(method(mouseEntered:))]
         fn mouse_entered(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Entered);
+            self.forward_mouse("mouseEntered:", event, MouseKind::Entered);
         }
         #[unsafe(method(mouseExited:))]
         fn mouse_exited(&self, event: &NSEvent) {
-            self.forward_mouse(event, MouseKind::Exited);
+            self.forward_mouse("mouseExited:", event, MouseKind::Exited);
         }
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
-            let p = self.local_point(event);
-            let scroll = Scroll {
-                dx: event.scrollingDeltaX(),
-                dy: event.scrollingDeltaY(),
-                precise: event.hasPreciseScrollingDeltas(),
-                x: p.x,
-                y: p.y,
-                modifiers: Modifiers::of(event.modifierFlags()),
-            };
-            self.with_responder(|r| r.scroll(&scroll));
+            guarded("scrollWheel:", || (), || {
+                let p = self.local_point(event);
+                let scroll = Scroll {
+                    dx: event.scrollingDeltaX(),
+                    dy: event.scrollingDeltaY(),
+                    precise: event.hasPreciseScrollingDeltas(),
+                    x: p.x,
+                    y: p.y,
+                    modifiers: Modifiers::of(event.modifierFlags()),
+                };
+                self.deliver(move |r| r.scroll(&scroll));
+            });
         }
 
         /// One tracking area over the visible rect, remade whenever AppKit
         /// asks, so mouse-moved and enter/exit arrive.
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
-            let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
-            if let Some(old) = self.ivars().tracking.borrow_mut().take() {
-                self.removeTrackingArea(&old);
-            }
-            let options = NSTrackingAreaOptions::MouseEnteredAndExited
-                | NSTrackingAreaOptions::MouseMoved
-                | NSTrackingAreaOptions::ActiveAlways
-                | NSTrackingAreaOptions::InVisibleRect;
-            // SAFETY: the owner is this view, which outlives the area it
-            // holds in its ivars; the rect is ignored under InVisibleRect.
-            let area = unsafe {
-                NSTrackingArea::initWithRect_options_owner_userInfo(
-                    NSTrackingArea::alloc(),
-                    self.bounds(),
-                    options,
-                    Some(self),
-                    None,
-                )
-            };
-            self.addTrackingArea(&area);
-            *self.ivars().tracking.borrow_mut() = Some(area);
+            guarded("updateTrackingAreas", || (), || {
+                let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
+                if let Some(old) = self.ivars().tracking.borrow_mut().take() {
+                    self.removeTrackingArea(&old);
+                }
+                let options = NSTrackingAreaOptions::MouseEnteredAndExited
+                    | NSTrackingAreaOptions::MouseMoved
+                    | NSTrackingAreaOptions::ActiveAlways
+                    | NSTrackingAreaOptions::InVisibleRect;
+                // SAFETY: the owner is this view, which outlives the area it
+                // holds in its ivars; the rect is ignored under InVisibleRect.
+                let area = unsafe {
+                    NSTrackingArea::initWithRect_options_owner_userInfo(
+                        NSTrackingArea::alloc(),
+                        self.bounds(),
+                        options,
+                        Some(self),
+                        None,
+                    )
+                };
+                self.addTrackingArea(&area);
+                *self.ivars().tracking.borrow_mut() = Some(area);
+            });
         }
 
-        /// The display link's target: one frame.
+        /// The display link's target: one frame. Skipped while the
+        /// responder is inside a call: that call may be the frame itself,
+        /// running a nested loop, and the next tick draws.
         #[unsafe(method(tick:))]
         fn tick(&self, link: &CADisplayLink) {
-            let target = link.targetTimestamp();
-            self.with_responder(|r| r.frame(target));
+            guarded("tick:", || (), || {
+                if self.ivars().responder.try_borrow_mut().is_err() {
+                    return;
+                }
+                let target = link.targetTimestamp();
+                self.deliver(move |r| r.frame(target));
+            });
         }
 
-        /// A [`Waker::wake`], arriving on the main thread.
+        /// A [`Waker::wake`], arriving on the main thread. Held, and folded
+        /// with any other, while the responder is busy.
         #[unsafe(method(wake:))]
         fn wake(&self, _ignored: Option<&AnyObject>) {
-            self.with_responder(|r| r.wake());
+            guarded("wake:", || (), || {
+                self.ivars().wake_held.set(true);
+                self.drain();
+            });
         }
 
         /// A [`Waker::present`], arriving on the main thread with the
-        /// surface to show.
+        /// surface to show. The surface goes on the layer at once; the
+        /// responder hears of it when it is free.
         #[unsafe(method(presentSurface:))]
         fn present_surface(&self, surface: &IOSurface) {
-            self.set_surface(surface);
-            self.with_responder(|r| r.presented());
+            guarded("presentSurface:", || (), || {
+                self.set_surface(surface);
+                let held = &self.ivars().presents_held;
+                held.set(held.get().saturating_add(1));
+                self.drain();
+            });
         }
     }
 
@@ -806,18 +942,22 @@ define_class!(
     unsafe impl NSTextInputClient for DrawableView {
         #[unsafe(method(insertText:replacementRange:))]
         unsafe fn insert_text_replacement_range(&self, text: &AnyObject, _range: NSRange) {
-            let s = string_of(text);
-            self.ivars().marked.borrow_mut().clear();
-            self.with_responder(|r| {
-                r.marked_text("");
-                r.text(&s);
+            guarded("insertText:replacementRange:", || (), || {
+                let s = string_of(text);
+                self.ivars().marked.borrow_mut().clear();
+                self.deliver(move |r| {
+                    r.marked_text("");
+                    r.text(&s);
+                });
             });
         }
 
         #[unsafe(method(doCommandBySelector:))]
         unsafe fn do_command_by_selector(&self, selector: Sel) {
-            let name = selector.name().to_str().unwrap_or("").to_string();
-            self.with_responder(|r| r.command(&name));
+            guarded("doCommandBySelector:", || (), || {
+                let name = selector.name().to_str().unwrap_or("").to_string();
+                self.deliver(move |r| r.command(&name));
+            });
         }
 
         #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
@@ -827,35 +967,44 @@ define_class!(
             _selected: NSRange,
             _replacement: NSRange,
         ) {
-            let s = string_of(text);
-            *self.ivars().marked.borrow_mut() = s.clone();
-            self.with_responder(|r| r.marked_text(&s));
+            guarded("setMarkedText:selectedRange:replacementRange:", || (), || {
+                let s = string_of(text);
+                *self.ivars().marked.borrow_mut() = s.clone();
+                self.deliver(move |r| r.marked_text(&s));
+            });
         }
 
         #[unsafe(method(unmarkText))]
         fn unmark_text(&self) {
-            self.ivars().marked.borrow_mut().clear();
-            self.with_responder(|r| r.marked_text(""));
+            guarded("unmarkText", || (), || {
+                self.ivars().marked.borrow_mut().clear();
+                self.deliver(|r| r.marked_text(""));
+            });
         }
 
         #[unsafe(method(selectedRange))]
         fn selected_range(&self) -> NSRange {
-            NSRange::new(NSUInteger::MAX, 0)
+            let none = || NSRange::new(NSUInteger::MAX, 0);
+            guarded("selectedRange", none, none)
         }
 
         #[unsafe(method(markedRange))]
         fn marked_range(&self) -> NSRange {
-            let n = self.ivars().marked.borrow().encode_utf16().count();
-            if n == 0 {
-                NSRange::new(NSUInteger::MAX, 0)
-            } else {
-                NSRange::new(0, n)
-            }
+            guarded("markedRange", || NSRange::new(NSUInteger::MAX, 0), || {
+                let n = self.ivars().marked.borrow().encode_utf16().count();
+                if n == 0 {
+                    NSRange::new(NSUInteger::MAX, 0)
+                } else {
+                    NSRange::new(0, n)
+                }
+            })
         }
 
         #[unsafe(method(hasMarkedText))]
         fn has_marked_text(&self) -> bool {
-            !self.ivars().marked.borrow().is_empty()
+            guarded("hasMarkedText", || false, || {
+                !self.ivars().marked.borrow().is_empty()
+            })
         }
 
         #[unsafe(method_id(attributedSubstringForProposedRange:actualRange:))]
@@ -864,37 +1013,44 @@ define_class!(
             _range: NSRange,
             _actual: *mut NSRange,
         ) -> Option<Retained<NSAttributedString>> {
-            None
+            guarded("attributedSubstringForProposedRange:actualRange:", || None, || None)
         }
 
         #[unsafe(method_id(validAttributesForMarkedText))]
         fn valid_attributes_for_marked_text(&self) -> Retained<NSArray<NSAttributedStringKey>> {
-            NSArray::new()
+            guarded("validAttributesForMarkedText", NSArray::new, NSArray::new)
         }
 
+        /// Answers at once, so while the responder is busy the rect is
+        /// empty, at the view's origin: the candidate window shows there
+        /// for that one ask.
         #[unsafe(method(firstRectForCharacterRange:actualRange:))]
         unsafe fn first_rect_for_character_range_actual_range(
             &self,
             _range: NSRange,
             _actual: *mut NSRange,
         ) -> NSRect {
-            let r = self
-                .with_responder(|r| r.cursor_rect())
-                .unwrap_or_default();
-            // The responder speaks top-left points; AppKit wants the rect
-            // in screen coordinates, bottom-left.
-            let flipped_y = self.bounds().size.height - r.y - r.h;
-            let local = NSRect::new(NSPoint::new(r.x, flipped_y), NSSize::new(r.w, r.h));
-            let in_window = self.convertRect_toView(local, None);
-            match self.window() {
-                Some(w) => w.convertRectToScreen(in_window),
-                None => in_window,
-            }
+            guarded("firstRectForCharacterRange:actualRange:", NSRect::default, || {
+                let r = self
+                    .ask(|r| r.cursor_rect())
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                // The responder speaks top-left points; AppKit wants the rect
+                // in screen coordinates, bottom-left.
+                let flipped_y = self.bounds().size.height - r.y - r.h;
+                let local = NSRect::new(NSPoint::new(r.x, flipped_y), NSSize::new(r.w, r.h));
+                let in_window = self.convertRect_toView(local, None);
+                match self.window() {
+                    Some(w) => w.convertRectToScreen(in_window),
+                    None => in_window,
+                }
+            })
         }
 
         #[unsafe(method(characterIndexForPoint:))]
         fn character_index_for_point(&self, _point: NSPoint) -> NSUInteger {
-            NSUInteger::MAX
+            guarded("characterIndexForPoint:", || NSUInteger::MAX, || NSUInteger::MAX)
         }
     }
 );
@@ -920,6 +1076,11 @@ impl DrawableView {
             tracking: RefCell::new(None),
             marked: RefCell::new(String::new()),
             scale: Cell::new(1.0),
+            held: RefCell::new(VecDeque::new()),
+            wake_held: Cell::new(false),
+            presents_held: Cell::new(0),
+            replacement: RefCell::new(None),
+            draining: Cell::new(false),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initialiser.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
@@ -927,14 +1088,122 @@ impl DrawableView {
         this
     }
 
-    /// Installs the responder every event goes to.
+    /// Installs the responder every event goes to. Called from inside a
+    /// responder call, it takes effect when that call returns, and what
+    /// was held for the old responder goes to the new one.
     pub fn set_responder(&self, responder: Box<dyn Responder>) {
-        *self.ivars().responder.borrow_mut() = Some(responder);
+        match self.ivars().responder.try_borrow_mut() {
+            Ok(mut slot) => {
+                // A replacement still waiting from an earlier call is older
+                // than this one, and must not overwrite it later.
+                self.ivars().replacement.borrow_mut().take();
+                *slot = Some(responder);
+            }
+            Err(_) => *self.ivars().replacement.borrow_mut() = Some(responder),
+        }
     }
 
-    fn with_responder<R>(&self, f: impl FnOnce(&mut dyn Responder) -> R) -> Option<R> {
-        let mut slot = self.ivars().responder.borrow_mut();
-        slot.as_mut().map(|r| f(r.as_mut()))
+    /// Calls the responder now, or holds the call until the responder is
+    /// free, then delivers anything held.
+    fn deliver(&self, f: impl FnOnce(&mut dyn Responder) + 'static) {
+        if let Err(Busy) = self.call(f) {
+            return;
+        }
+        self.drain();
+    }
+
+    /// Calls the responder now, or, while it is busy, holds `f` and
+    /// answers [`Busy`]. Delivers nothing held.
+    fn call(&self, f: impl FnOnce(&mut dyn Responder) + 'static) -> Result<(), Busy> {
+        let Ok(mut slot) = self.ivars().responder.try_borrow_mut() else {
+            self.ivars()
+                .held
+                .borrow_mut()
+                .push_back(Held::Call(Box::new(f)));
+            return Err(Busy);
+        };
+        if let Some(r) = slot.as_mut() {
+            f(r.as_mut());
+        }
+        Ok(())
+    }
+
+    /// Asks the responder for an answer now, or answers [`Busy`]: for a
+    /// question that cannot wait. `Ok(None)` when there is no responder.
+    fn ask<R>(&self, f: impl FnOnce(&mut dyn Responder) -> R) -> Result<Option<R>, Busy> {
+        let mut slot = self.ivars().responder.try_borrow_mut().map_err(|_| Busy)?;
+        Ok(slot.as_mut().map(|r| f(r.as_mut())))
+    }
+
+    /// Delivers what was held while the responder was busy -- the events
+    /// in order, then each present, then one wake -- until nothing is
+    /// left. Does nothing while the responder is busy, or inside itself:
+    /// the outer drain picks up what an inner call held.
+    fn drain(&self) {
+        let ivars = self.ivars();
+        if ivars.draining.get() || ivars.responder.try_borrow_mut().is_err() {
+            return;
+        }
+        ivars.draining.set(true);
+        let _clear = Draining(&ivars.draining);
+        loop {
+            if let Some(next) = ivars.replacement.borrow_mut().take() {
+                *ivars.responder.borrow_mut() = Some(next);
+            }
+            let next = ivars.held.borrow_mut().pop_front();
+            if let Some(held) = next {
+                match held {
+                    Held::Call(f) => {
+                        if self.call(f).is_err() {
+                            return;
+                        }
+                    }
+                    Held::KeyDown(event) => self.press(&event),
+                }
+            } else if ivars.presents_held.get() > 0 {
+                ivars.presents_held.set(ivars.presents_held.get() - 1);
+                if self.call(|r| r.presented()).is_err() {
+                    return;
+                }
+            } else if ivars.wake_held.replace(false) {
+                if self.call(|r| r.wake()).is_err() {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+    }
+
+    /// A key press: to the responder, then to the input manager if it
+    /// answers [`Handled::Interpret`] or there is no responder. Held whole
+    /// while the responder is busy.
+    fn press(&self, event: &NSEvent) {
+        let press = KeyPress::of(event);
+        let handled = match self.ask(|r| r.key(&press)) {
+            Ok(handled) => handled.unwrap_or(Handled::Interpret),
+            Err(Busy) => {
+                self.ivars()
+                    .held
+                    .borrow_mut()
+                    .push_back(Held::KeyDown(event.retain()));
+                return;
+            }
+        };
+        if handled == Handled::Interpret {
+            let events = NSArray::from_slice(&[event]);
+            self.interpretKeyEvents(&events);
+        }
+        self.drain();
+    }
+
+    /// A menu action, delivered as its selector.
+    fn menu_command(&self, selector: &'static str) {
+        guarded(
+            selector,
+            || (),
+            || self.deliver(move |r| r.command(selector)),
+        );
     }
 
     /// The window's backing scale factor, 1.0 before the view is in one.
@@ -956,7 +1225,7 @@ impl DrawableView {
     fn notify_resized(&self) {
         let size = self.bounds().size;
         let scale = self.ivars().scale.get();
-        self.with_responder(|r| r.resized(size, scale));
+        self.deliver(move |r| r.resized(size, scale));
     }
 
     /// Shows `surface` as the layer's contents. This is the present; the
@@ -1007,12 +1276,15 @@ impl DrawableView {
     }
 
     fn local_point(&self, event: &NSEvent) -> NSPoint {
-        let p = self.convertPoint_fromView(event.locationInWindow(), None);
-        // Flipped view: `p` is already top-left.
-        p
+        // Flipped view: the point is already top-left.
+        self.convertPoint_fromView(event.locationInWindow(), None)
     }
 
-    fn forward_mouse(&self, event: &NSEvent, kind: MouseKind) {
+    fn forward_mouse(&self, selector: &str, event: &NSEvent, kind: MouseKind) {
+        guarded(selector, || (), || self.mouse_event(event, kind));
+    }
+
+    fn mouse_event(&self, event: &NSEvent, kind: MouseKind) {
         let p = self.local_point(event);
         let button = match event.buttonNumber() {
             0 => Button::Left,
@@ -1032,7 +1304,7 @@ impl DrawableView {
             modifiers: Modifiers::of(event.modifierFlags()),
             clicks,
         };
-        self.with_responder(|r| r.mouse(&m));
+        self.deliver(move |r| r.mouse(&m));
     }
 }
 
