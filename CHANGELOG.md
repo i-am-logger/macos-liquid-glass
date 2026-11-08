@@ -9,7 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fix
 
-- a responder call that runs the run loop no longer aborts the process
+- a responder call that runs the run loop no longer aborts the process. A
+  nested run loop inside a responder call (`activateFileViewerSelectingURLs:`,
+  a modal panel, an `NSAlert`) delivered a queued `wake:` or `presentSurface:`
+  into the busy responder; the second borrow panicked inside a Foundation
+  perform, and Rust aborted.
+
+### Changed behaviour
+
+Only while a responder call runs a nested run loop:
+
+- What arrives is held and delivered after the outermost call returns: input
+  and view events in order, then one `presented()` per present, then one
+  `wake()` for any number of wakes.
+- A present's surface still goes on the layer at once, but its `presented()`
+  arrives late, so a timestamp taken there is not a frame time.
+- A display-link tick is skipped; the next one draws.
+- `set_responder` from inside a responder call takes effect when it returns.
+
+And always: a panic in a responder now stops at the view, writes the selector
+to stderr and returns AppKit's default, where it aborted the process. Under
+`panic = "abort"` it still aborts.
 
 ## [1.0.0-beta.8](https://github.com/i-am-logger/macos-liquid-glass/compare/v1.0.0-beta.7...v1.0.0-beta.8) - 2026-11-05
 
