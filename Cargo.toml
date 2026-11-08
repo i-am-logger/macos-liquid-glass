@@ -176,3 +176,11 @@ test = true
 name = "drawable_events"
 required-features = ["drawable"]
 harness = false
+
+# A responder that runs a nested run loop inside a frame, and one that
+# panics: what arrives, when, and that neither aborts the process. Its own
+# target, because before the fix each check aborted the whole process.
+[[test]]
+name = "drawable_reentrancy"
+required-features = ["drawable"]
+harness = false

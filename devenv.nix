@@ -190,7 +190,8 @@ in
     };
 
     "test:clippy" = {
-      exec = "cargo clippy --quiet --all-targets -- -D warnings";
+      # `drawable` is off by default; without it clippy never reads that module.
+      exec = "cargo clippy --quiet --all-targets --features drawable -- -D warnings";
       after = [ "test:fmt" ];
     };
 
@@ -213,7 +214,7 @@ in
         set -eu
         for f in "" "window" "glass" "material" "icon-style" "window,glass" \
                  "window,material" "icon-style,private-spi" "window,glass,icon-style" \
-                 "window,glass,icon-style,private-spi"; do
+                 "window,glass,icon-style,private-spi" "drawable"; do
           echo "--- features: ''${f:-<none>}"
           if [ -z "$f" ]; then
             cargo test --quiet --no-default-features
@@ -231,7 +232,7 @@ in
     "test:docs" = {
       exec = ''
         set -eu
-        for f in "" "window" "glass" "material" "icon-style" "window,glass,icon-style,private-spi"; do
+        for f in "" "window" "glass" "material" "icon-style" "drawable" "window,glass,icon-style,private-spi"; do
           echo "--- doc: ''${f:-<none>}"
           if [ -z "$f" ]; then
             RUSTDOCFLAGS='-D warnings' cargo doc --quiet --no-deps --lib --no-default-features
